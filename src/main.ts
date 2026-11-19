@@ -1511,6 +1511,19 @@ async function exportAll(list?: Doc[]) {
   if (!todo.length) return;
   const busy = docs.some((d) => d.pages.some((p) => p.detect === 'bezig')) || detectQueue.length > 0 || detectRunning > 0;
   if (busy && !confirm('De detectie is nog bezig. Toch nu exporteren?')) return;
+  const attention = todo.filter((d) => needsAttention(d) && d.pages.some((p) => p.boxes.length));
+  if (
+    attention.length &&
+    !confirm(
+      `${attention.length} document(en) hebben aandachtspunten (bijv. een pagina zonder vak terwijl die bij anderen wel vakken heeft): ${attention
+        .slice(0, 5)
+        .map(docText)
+        .join(', ')}${attention.length > 5 ? ', …' : ''}.
+
+Toch exporteren? (Tip: gebruik eerst het controle-overzicht.)`,
+    )
+  )
+    return;
   const noName = todo.filter((d) => !d.pages.some((p) => p.boxes.length));
   if (noName.length && !confirm(`${noName.length} document(en) hebben geen enkel vak. Die worden zonder wijzigingen (maar wel als nieuwe afbeelding) geëxporteerd. Doorgaan?`)) return;
 
