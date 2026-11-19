@@ -720,13 +720,20 @@ function renderOverlay() {
       const e = el(
         'div',
         { class: `box ${b.kind}${b.id === selBox ? ' sel' : ''}`, 'data-id': b.id, title: b.label ? `Gevonden bij label "${b.label}"` : '' },
-        el('span', { class: 'tag' }, `${KIND_LABEL[b.kind]}${b.text ? ' · tekst' : ''}${b.source === 'auto' ? ' · auto' : ''}`),
+        el('span', { class: 'tag' }, `${KIND_LABEL[b.kind]}${b.text ? ' · tekst' : ''}${originTag(b)}`),
       );
       positionBox(e, b);
       if (b.id === selBox) for (const h of ['nw', 'ne', 'sw', 'se']) e.append(el('div', { class: `handle ${h}`, 'data-h': h }));
       return e;
     }),
   );
+}
+
+function originTag(b: Box) {
+  if (b.label?.startsWith('afgeleid')) return ' · afgeleid';
+  if (b.label?.startsWith('gezochte naam')) return ' · gezochte naam';
+  if (b.label === 'sjabloon') return ' · sjabloon';
+  return b.source === 'auto' ? ' · auto' : '';
 }
 
 function positionBox(e: HTMLElement, b: Box) {
