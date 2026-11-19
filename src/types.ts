@@ -19,6 +19,9 @@ export interface Box extends Rect {
   text: boolean;
   /** Herkend label (alleen informatief, bv. "Naam kandidaat"). */
   label?: string;
+  /** Linkerbovenhoek van het gedrukte label (genormaliseerd), om pagina's te vergelijken. */
+  ax?: number;
+  ay?: number;
 }
 
 export type DetectState = 'nog niet' | 'bezig' | 'klaar' | 'fout' | 'overgeslagen';
@@ -86,6 +89,6 @@ export const DEFAULT_SETTINGS: Settings = {
   kwStop: 'examenvak, vak, datum, date, docent, blad, pagina, cijfer, score, school, gymnasium, coornhert, toets, onderwerp, niveau',
   detectNummer: true,
   detectKlas: true,
-  padding: 0.3,
+  padding: 0.5,
   showLabels: true,
 };

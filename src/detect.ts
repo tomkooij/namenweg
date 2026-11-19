@@ -99,6 +99,7 @@ export async function detectPage(canvas: HTMLCanvasElement, settings: Settings):
     const textRot = ((360 - r) % 360) as Rot;
     let boxes: Box[] = regions.map((g) => {
       const p = unrotate(g.rect, r, W, H);
+      const a = unrotate({ x0: g.anchor.x, y0: g.anchor.y, x1: g.anchor.x, y1: g.anchor.y }, r, W, H);
       return {
         id: uid(),
         x: p.x0 / W,
@@ -111,6 +112,8 @@ export async function detectPage(canvas: HTMLCanvasElement, settings: Settings):
         text: false,
         label: g.label,
         conf: g.conf,
+        ax: a.x0 / W,
+        ay: a.y0 / H,
       } as Box & { conf: number };
     });
     boxes = mergeBoxes(boxes);

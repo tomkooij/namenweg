@@ -22,7 +22,8 @@ export interface Source {
   numPages: number;
   /** Paginaformaat in punten (na rotatie). */
   sizes: { w: number; h: number }[];
-  render(index: number, dpi: number): Promise<HTMLCanvasElement>;
+  /** `display` = voor op het scherm; anders 'print'-modus, die ook in een verborgen tabblad doorloopt. */
+  render(index: number, dpi: number, display?: boolean): Promise<HTMLCanvasElement>;
   destroy(): void;
 }
 
@@ -42,7 +43,7 @@ async function openPdf(file: File): Promise<Source> {
   return {
     numPages: pdf.numPages,
     sizes,
-    async render(index, dpi) {
+    async render(index, dpi, display = false) {
       const page = await pdf.getPage(index + 1);
       const vp = page.getViewport({ scale: dpi / 72 });
       const canvas = document.createElement('canvas');
@@ -51,7 +52,8 @@ async function openPdf(file: File): Promise<Source> {
       const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
       ctx.fillStyle = '#fff';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
-      await page.render({ canvas, canvasContext: ctx, viewport: vp, annotationMode: pdfjs.AnnotationMode.DISABLE }).promise;
+      // 'print' gebruikt geen requestAnimationFrame: werkt ook als het tabblad op de achtergrond staat.
+      await page.render({ canvas, canvasContext: ctx, viewport: vp, intent: display ? 'display' : 'print', annotationMode: pdfjs.AnnotationMode.DISABLE }).promise;
       page.cleanup();
       return canvas;
     },

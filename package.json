@@ -8,7 +8,9 @@
     "prebuild": "node scripts/copy-assets.mjs",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:render": "python test/render-pages.py .testdata",
+    "test:detect": "tsx test/detect-node.ts .testdata && python test/draw-report.py .testdata"
   },
   "keywords": [],
   "author": "",

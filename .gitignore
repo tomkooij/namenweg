@@ -17,3 +17,4 @@ public/tesseract/
 *.log
 .DS_Store
 public/pdfjs/
+.testdata/

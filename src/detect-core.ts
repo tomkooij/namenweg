@@ -162,6 +162,13 @@ export function findLabels(words: OcrWord[], phrases: Phrase[]): Label[] {
         continue;
       }
       const ws = line.slice(i, i + matched.len);
+      // Afgekapt herkend label ("kandid" i.p.v. "kandidaat:") doortrekken tot de volle lengte,
+      // zodat het vak niet midden in het label begint.
+      const lastWord = ws[ws.length - 1];
+      const lastTok = matched.len === 1 && matched.p.tokens.length > 1 ? matched.p.joined : matched.p.tokens[matched.p.tokens.length - 1];
+      const lastNorm = norm(lastWord.text);
+      let extra = 0;
+      if (lastNorm.length > 0 && lastTok.length > lastNorm.length) extra = ((lastWord.x1 - lastWord.x0) / lastNorm.length) * (lastTok.length - lastNorm.length + 0.5);
       const conf = ws.reduce((a, w) => a + w.conf, 0) / ws.length;
       const lbl: Label = {
         kind: matched.p.kind,
@@ -170,7 +177,7 @@ export function findLabels(words: OcrWord[], phrases: Phrase[]): Label[] {
         h: labelHeight(ws),
         x0: Math.min(...ws.map((w) => w.x0)),
         y0: Math.min(...ws.map((w) => w.y0)),
-        x1: Math.max(...ws.map((w) => w.x1)),
+        x1: Math.max(...ws.map((w) => w.x1)) + extra,
         y1: Math.max(...ws.map((w) => w.y1)),
       };
       // Een label moet "los" staan: eerste woord op de regel, of een duidelijk gat ervoor,
@@ -233,7 +240,7 @@ export class InkMask {
         const lum = 0.299 * r + 0.587 * g + 0.114 * b;
         const ink =
           lum < 150 ||
-          (b > r + 30 && b > g + 10 && lum < 215) || // blauwe pen
+          (b > r + 18 && b > g + 6 && lum < 232) || // blauwe pen (ook dunne, lichte streken)
           (r > g + 45 && r > b + 45 && lum < 210); // rode pen
         if (ink) this.m[my * this.w + mx] = 1;
       }
@@ -381,7 +388,7 @@ const overlapY = (a: PxRect, b: PxRect) => Math.max(0, Math.min(a.y1, b.y1) - Ma
 
 /** Bepaal de te verwijderen gebieden (in pixels) bij de gevonden labels. */
 export function regionsFor(labels: Label[], mask: InkMask, W: number, H: number, pad: number) {
-  const result: { kind: BoxKind; rect: PxRect; label: string; conf: number }[] = [];
+  const result: { kind: BoxKind; rect: PxRect; label: string; conf: number; anchor: { x: number; y: number } }[] = [];
   const personal = labels.filter((l) => l.kind !== 'stop');
   for (const L of personal) {
     const h = L.h;
@@ -411,9 +418,10 @@ export function regionsFor(labels: Label[], mask: InkMask, W: number, H: number,
       parts.push(below);
     } else if (right - L.x1 > 1.5 * h) {
       // Rechts van het label
-      const base: PxRect = { x0: L.x1 + 0.15 * h, y0: L.y0 - 0.9 * h, x1: right, y1: L.y1 + 0.5 * h };
-      // Handschrift mag een stukje over een volgend label heen doorlopen.
-      const win: PxRect = { x0: L.x0 - 1 * h, y0: L.y0 - 2.6 * h, x1: Math.min(W, right + 6 * h), y1: L.y1 + 1.6 * h };
+      const base: PxRect = { x0: L.x1 + 0.15 * h, y0: L.y0 - (L.kind === 'naam' ? 2 : 1.2) * h, x1: right, y1: L.y1 + 0.5 * h };
+      // Handschrift mag een stukje over een volgend label heen doorlopen, en hoge
+      // hoofdletters/krullen steken vaak ver boven de regel uit.
+      const win: PxRect = { x0: L.x0 - 1 * h, y0: L.y0 - 4 * h, x1: Math.min(W, right + 6 * h), y1: L.y1 + 1.6 * h };
       // Een ingevulde waarde begint vlak na het label; inkt verderop hoort bij iets anders.
       // Bij een naam mag het gat groter zijn (label half herkend, naam ver naar rechts geschreven).
       let seed: PxRect = { ...base, x1: Math.min(right, L.x1 + 4 * h) };
@@ -443,7 +451,7 @@ export function regionsFor(labels: Label[], mask: InkMask, W: number, H: number,
         x1: Math.min(W, p.x1 + pad * h),
         y1: Math.min(H, p.y1 + pad * h),
       };
-      result.push({ kind: L.kind as BoxKind, rect: r, label: L.text, conf: L.conf });
+      result.push({ kind: L.kind as BoxKind, rect: r, label: L.text, conf: L.conf, anchor: { x: L.x0, y: L.y0 } });
     }
   }
   return result;
@@ -506,7 +514,7 @@ export function completeFromPeers(pages: PeerPage[], tol = 0.03): { page: PeerPa
     const qa = auto(q);
     if (!qa.length) continue;
     // Per ontbrekende soort: vereniging van voorspellingen uit alle passende andere pagina's.
-    const predictions = new Map<BoxKind, { x0: number; y0: number; x1: number; y1: number; rot: Rot; n: number }>();
+    const collected = new Map<BoxKind, { x0: number; y0: number; x1: number; y1: number; rot: Rot }[]>();
     for (const p of pages) {
       if (p === q || !sameShape(p, q)) continue;
       const pa = auto(p);
@@ -518,8 +526,11 @@ export function completeFromPeers(pages: PeerPage[], tol = 0.03): { page: PeerPa
           if (qb.kind !== pb.kind || qb.rot !== pb.rot) continue;
           // Verticaal moet het kloppen; horizontaal mag het vak anders beginnen (label half
           // herkend). Bij een groot horizontaal verschil niet horizontaal verschuiven.
-          let dx = qb.x - pb.x;
-          const dy = qb.y - pb.y;
+          // Liefst verankeren op het gedrukte label (stabiel), anders op het vak zelf.
+          const useLabel = qb.ax !== undefined && qb.ay !== undefined && pb.ax !== undefined && pb.ay !== undefined;
+          // Anders gelezen label ("kandid" vs "Naam kandidaat") begint op een andere x: dan alleen verticaal.
+          let dx = useLabel ? (norm(qb.label ?? '') === norm(pb.label ?? '') ? qb.ax! - pb.ax! : 0) : qb.x - pb.x;
+          const dy = useLabel ? qb.ay! - pb.ay! : qb.y - pb.y;
           if (Math.abs(dy) >= tol || Math.abs(dx) >= 2 * tol) continue;
           if (Math.abs(dx) >= tol) dx = 0;
           if (!best || Math.hypot(dx, dy) < Math.hypot(best.dx, best.dy)) best = { dx, dy };
@@ -529,18 +540,33 @@ export function completeFromPeers(pages: PeerPage[], tol = 0.03): { page: PeerPa
         const shifted = { x: pb.x + best.dx, y: pb.y + best.dy, w: pb.w, h: pb.h };
         // Bestaat er op q al een vak op die plek? Dan niets doen.
         if (q.boxes.some((b) => overlapArea(b, shifted) > 0.3 * shifted.w * shifted.h)) continue;
-        const cur = predictions.get(pb.kind);
-        const r = { x0: shifted.x, y0: shifted.y, x1: shifted.x + shifted.w, y1: shifted.y + shifted.h };
-        if (!cur) predictions.set(pb.kind, { ...r, rot: pb.rot, n: 1 });
-        else predictions.set(pb.kind, { x0: Math.min(cur.x0, r.x0), y0: Math.min(cur.y0, r.y0), x1: Math.max(cur.x1, r.x1), y1: Math.max(cur.y1, r.y1), rot: cur.rot, n: cur.n + 1 });
+        const list = collected.get(pb.kind) ?? [];
+        list.push({ x0: shifted.x, y0: shifted.y, x1: shifted.x + shifted.w, y1: shifted.y + shifted.h, rot: pb.rot });
+        collected.set(pb.kind, list);
       }
     }
+    // Horizontaal de vereniging (namen verschillen in lengte), verticaal de mediaan (één lange
+    // staart of krul moet het vak niet de antwoorden in laten lopen).
+    const median = (a: number[]) => {
+      const b = [...a].sort((x, y) => x - y);
+      return b[Math.floor((b.length - 1) / 2)];
+    };
+    const predictions = new Map<BoxKind, { x0: number; y0: number; x1: number; y1: number; rot: Rot; n: number }>();
+    for (const [kind, list] of collected)
+      predictions.set(kind, {
+        x0: Math.min(...list.map((r) => r.x0)),
+        x1: Math.max(...list.map((r) => r.x1)),
+        y0: median(list.map((r) => r.y0)),
+        y1: median(list.map((r) => r.y1)),
+        rot: list[0].rot,
+        n: list.length,
+      });
     for (const [kind, r0] of predictions) {
       // Onrealistisch grote voorspellingen negeren
       if (r0.x1 - r0.x0 > 0.4 || r0.y1 - r0.y0 > 0.25) continue;
       // Extra marge: een afgeleid vak is minder precies.
-      const mx = (r0.x1 - r0.x0) * 0.15;
-      const my = (r0.y1 - r0.y0) * 0.15;
+      const mx = (r0.x1 - r0.x0) * 0.12;
+      const my = (r0.y1 - r0.y0) * 0.1;
       const r = { ...r0, x0: r0.x0 - mx, x1: r0.x1 + mx, y0: r0.y0 - my, y1: r0.y1 + my };
       const box: Omit<Box, 'id'> = {
         x: Math.max(0, r.x0),
@@ -561,13 +587,15 @@ export function completeFromPeers(pages: PeerPage[], tol = 0.03): { page: PeerPa
 
 /**
  * Verfijn een (afgeleid) vak met de inkt op de pagina: alle inkt die het vak raakt, wordt
- * meegenomen binnen een venster dat 60% groter is. Werkt in genormaliseerde coördinaten.
+ * meegenomen binnen een venster dat 25% groter is. Werkt in genormaliseerde coördinaten.
  */
 export function refineWithInk(mask: InkMask, W: number, H: number, b: { x: number; y: number; w: number; h: number }) {
   const r: PxRect = { x0: b.x * W, y0: b.y * H, x1: (b.x + b.w) * W, y1: (b.y + b.h) * H };
-  const ex = (r.x1 - r.x0) * 0.6;
-  const ey = (r.y1 - r.y0) * 0.6;
-  const win: PxRect = { x0: Math.max(0, r.x0 - ex), y0: Math.max(0, r.y0 - ey), x1: Math.min(W, r.x1 + ex), y1: Math.min(H, r.y1 + ey) };
+  const ex = (r.x1 - r.x0) * 0.25;
+  const ey = (r.y1 - r.y0) * 0.25;
+  // Alleen opzij uitbreiden: boven/onder liggen vaak andere velden of de antwoorden.
+  const win: PxRect = { x0: Math.max(0, r.x0 - ex), y0: r.y0, x1: Math.min(W, r.x1 + ex), y1: r.y1 };
+  void ey;
   const g = mask.grow(r, win);
   const u = union(r, g)!;
   const pad = 0.01 * Math.min(W, H);

@@ -560,7 +560,7 @@ async function renderEditor() {
   let c = cacheGet(key);
   if (!c) {
     try {
-      c = await cur.src.render(p.index, dpi);
+      c = await cur.src.render(p.index, dpi, true);
     } catch (e) {
       setStatus('Pagina kan niet worden weergegeven: ' + (e instanceof Error ? e.message : String(e)));
       return;

@@ -36,7 +36,7 @@ for (const f of readdirSync(dir).filter((f) => /^[a-z]+-\d+\.png$/.test(f) && f.
     H: png.height,
     wPt: png.width,
     hPt: png.height,
-    boxes: regions.map((g, i) => ({ id: String(i), x: g.rect.x0 / png.width, y: g.rect.y0 / png.height, w: (g.rect.x1 - g.rect.x0) / png.width, h: (g.rect.y1 - g.rect.y0) / png.height, kind: g.kind, source: 'auto', rot: 0, text: false })),
+    boxes: regions.map((g, i) => ({ id: String(i), x: g.rect.x0 / png.width, y: g.rect.y0 / png.height, w: (g.rect.x1 - g.rect.x0) / png.width, h: (g.rect.y1 - g.rect.y0) / png.height, kind: g.kind, source: 'auto', rot: 0, text: false, label: g.label, ax: g.anchor.x / png.width, ay: g.anchor.y / png.height })),
   });
   report[f] = { labels: labels.map((l) => `${l.kind}:${l.text}(${Math.round(l.conf)})`), regions: regions.map((g) => ({ kind: g.kind, ...g.rect })) };
   console.log(f, labels.map((l) => `${l.kind}:${l.text}`).join(' | '), '→', regions.map((g) => `${g.kind}[${Math.round(g.rect.x0)},${Math.round(g.rect.y0)},${Math.round(g.rect.x1)},${Math.round(g.rect.y1)}]`).join(' '));
