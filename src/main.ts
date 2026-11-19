@@ -1,7 +1,7 @@
 import './styles.css';
 import { zipSync } from 'fflate';
 import { DEFAULT_SETTINGS, type Box, type BoxKind, type PageState, type Rot, type Settings } from './types';
-import { openFile, isSupported, mapSource, release, withRotation, type Source } from './pdfio';
+import { openFile, isSupported, release, withRotation, type Source } from './pdfio';
 import { detectPage, norm } from './detect';
 import { completeFromPeers, InkMask, nameTokensFromFileName, refineWithInk } from './detect-core';
 import { setWorkerCount, defaultWorkerCount, onOcrStatus } from './ocr';
@@ -20,21 +20,41 @@ interface Doc {
   status: 'laden' | 'klaar' | 'fout';
   error?: string;
   exported?: boolean;
-  /** Gedeelde, geopende bron (meerdere documenten na splitsen). */
-  raw?: { src: Source; refs: number };
-  /** Paginanummers in de bron. */
-  map?: number[];
+  /** Per pagina: uit welk geopend bestand en welke pagina daarin (splitsen/samenvoegen). */
+  parts?: { raw: Raw; idx: number }[];
   /** Gemiddelde bestandsgrootte per pagina van het origineel (voor automatische kwaliteit). */
   bpp?: number;
 }
 
+/** Een geopend bronbestand; kan door meerdere documenten gedeeld worden. */
+interface Raw {
+  src: Source;
+  refs: number;
+  bpp: number;
+}
+
 function makeView(d: Doc): Source {
-  return withRotation(mapSource(d.raw!.src, d.map!), (i) => d.pages[i]?.userRot ?? 0);
+  const parts = d.parts!;
+  const view: Source = {
+    numPages: parts.length,
+    sizes: parts.map((p) => p.raw.src.sizes[p.idx]),
+    render: (i, dpi, display) => parts[i].raw.src.render(parts[i].idx, dpi, display),
+    destroy: () => {},
+  };
+  return withRotation(view, (i) => d.pages[i]?.userRot ?? 0);
+}
+
+/** Maak een document dat (een deel van) bestaande bronnen gebruikt. */
+function attachParts(d: Doc, parts: { raw: Raw; idx: number }[]) {
+  d.parts = parts;
+  for (const r of new Set(parts.map((p) => p.raw))) r.refs++;
+  d.bpp = parts.reduce((a, p) => a + p.raw.bpp, 0) / Math.max(1, parts.length);
+  d.src = makeView(d);
 }
 
 function releaseDoc(d: Doc) {
-  if (d.raw && --d.raw.refs <= 0) d.raw.src.destroy();
-  d.raw = undefined;
+  for (const r of new Set((d.parts ?? []).map((p) => p.raw))) if (--r.refs <= 0) r.src.destroy();
+  d.parts = undefined;
 }
 
 interface ExportResult {
@@ -257,12 +277,10 @@ async function addFiles(files: File[]) {
     setStatus(`Inlezen: ${++i}/${added.length}…`);
     setProgress(i - 1, added.length);
     try {
-      const raw = await openFile(d.file);
-      d.raw = { src: raw, refs: 1 };
-      d.map = Array.from({ length: raw.numPages }, (_, i) => i);
-      d.bpp = d.file.size / Math.max(1, raw.numPages);
-      d.src = makeView(d);
-      d.pages = d.src.sizes.map((s, index) => ({ index, wPt: s.w, hPt: s.h, boxes: [], detect: 'nog niet' }));
+      const src = await openFile(d.file);
+      const raw: Raw = { src, refs: 0, bpp: d.file.size / Math.max(1, src.numPages) };
+      attachParts(d, Array.from({ length: src.numPages }, (_, idx) => ({ raw, idx })));
+      d.pages = src.sizes.map((s, index) => ({ index, wPt: s.w, hPt: s.h, boxes: [], detect: 'nog niet' }));
       d.status = 'klaar';
     } catch (e) {
       d.status = 'fout';
@@ -270,6 +288,7 @@ async function addFiles(files: File[]) {
     }
     renderDocList();
     if (d === cur) renderAll();
+    else renderInspector();
     makeThumbs(d);
   }
   setProgress(0, 0);
@@ -327,7 +346,7 @@ function clearAll() {
 /** Deel een document op in meerdere documenten (bijv. één scan van de hele klas). */
 function splitDoc(d: Doc, starts: number[]) {
   const s = [...new Set(starts.filter((i) => i > 0 && i < d.pages.length))].sort((a, b) => a - b);
-  if (!s.length || !d.raw || !d.map) return;
+  if (!s.length || !d.parts) return;
   const bounds = [0, ...s, d.pages.length];
   const used = usedNumbers(d);
   const parts: Doc[] = [];
@@ -343,14 +362,11 @@ function splitDoc(d: Doc, starts: number[]) {
       pages: idx.map((i, j) => ({ ...structuredClone(d.pages[i]), index: j, boxes: d.pages[i].boxes.map((b) => ({ ...b, id: uid() })) })),
       num,
       status: 'klaar',
-      raw: d.raw,
-      map: idx.map((i) => d.map![i]),
-      bpp: d.bpp,
     };
-    nd.src = makeView(nd);
+    attachParts(nd, idx.map((i) => d.parts![i]));
     parts.push(nd);
   }
-  d.raw.refs += parts.length - 1; // d zelf verdwijnt
+  releaseDoc(d); // d zelf verdwijnt; de delen houden de bron vast
   dropFromQueue(d);
   const at = docs.indexOf(d);
   docs.splice(at, 1, ...parts);
@@ -361,6 +377,34 @@ function splitDoc(d: Doc, starts: number[]) {
   }
   undoStack.length = redoStack.length = 0;
   toast(`Opgesplitst in ${parts.length} documenten.`);
+  renderAll();
+}
+
+/** Voeg document b achter document a (bijv. een apart gescande uitwerkbijlage). */
+function mergeDocs(a: Doc, b: Doc) {
+  if (!a.parts || !b.parts) return;
+  const nd: Doc = {
+    id: uid(),
+    name: `${a.name} + ${b.name}`,
+    file: a.file,
+    src: null,
+    pages: [...a.pages, ...b.pages].map((p, j) => ({ ...structuredClone(p), index: j, boxes: p.boxes.map((x) => ({ ...x, id: uid() })) })),
+    num: a.num,
+    status: 'klaar',
+  };
+  attachParts(nd, [...a.parts, ...b.parts]);
+  releaseDoc(a);
+  releaseDoc(b);
+  dropFromQueue(a);
+  dropFromQueue(b);
+  const at = docs.indexOf(a);
+  docs.splice(at, 1, nd);
+  docs.splice(docs.indexOf(b), 1);
+  cur = nd;
+  curPage = 0;
+  selBox = null;
+  undoStack.length = redoStack.length = 0;
+  toast(`Samengevoegd: ${nd.pages.length} pagina's.`);
   renderAll();
 }
 
@@ -1284,6 +1328,21 @@ function renderInspector() {
         el('button', { class: 'btn small', onclick: () => { d.num = uniqueNumber(S.numMin, S.numMax, usedNumbers(d)); d.exported = false; renderDocList(); renderInspector(); refreshPreview(); } }, '🎲 Ander nummer'),
         el('button', { class: 'btn small', onclick: () => exportAll([d]) }, '⬇ Alleen dit document'),
         el('button', { class: 'btn small', onclick: () => openSplit(d), disabled: d.pages.length < 2, title: 'Eén scan met meerdere leerlingen opdelen' }, '✂ Splitsen…'),
+        el(
+          'button',
+          {
+            class: 'btn small',
+            disabled: !docs[docs.indexOf(d) + 1] || docs[docs.indexOf(d) + 1].status !== 'klaar',
+            title: 'Het volgende document in de lijst achter dit document plakken (bijv. een apart gescande bijlage)',
+            onclick: () => {
+              const nxt = docs[docs.indexOf(d) + 1];
+              if (!nxt) return;
+              if (detectQueue.some((j) => j.doc === d || j.doc === nxt)) return toast('Wacht tot de detectie klaar is.');
+              if (confirm(`"${nxt.name}" achter "${d.name}" plakken tot één document (${docText(d)})?`)) mergeDocs(d, nxt);
+            },
+          },
+          '⤵ Samenvoegen met volgende',
+        ),
       ),
     ),
   );

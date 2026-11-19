@@ -123,16 +123,6 @@ export function rotateCanvas(src: HTMLCanvasElement, r: Rot): HTMLCanvasElement 
   return c;
 }
 
-/** Bron met een selectie/volgorde van pagina's uit een andere bron (voor splitsen). */
-export function mapSource(src: Source, map: number[]): Source {
-  return {
-    numPages: map.length,
-    sizes: map.map((i) => src.sizes[i]),
-    render: (index, dpi, display) => src.render(map[index], dpi, display),
-    destroy: () => {},
-  };
-}
-
 /**
  * Bron met extra, door de gebruiker gekozen paginarotatie. Alle code werkt met de gedraaide
  * weergave; het origineel blijft ongemoeid.
