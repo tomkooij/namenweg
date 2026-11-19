@@ -349,7 +349,11 @@ aside.right {
   padding: 8px 12px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
-  flex-wrap: wrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.toolbar > * {
+  flex: none;
 }
 .toolbar .sep {
   width: 1px;

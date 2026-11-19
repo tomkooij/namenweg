@@ -395,6 +395,7 @@ async function runDetect(doc: Doc, p: PageState) {
     if (p.index === curPage) {
       renderOverlay();
       renderInspector();
+      renderToolbar();
       refreshPreview();
     }
   }
@@ -427,6 +428,7 @@ async function completeMissing(): Promise<number> {
   if (adds.length) {
     renderDocList();
     renderStrip();
+    renderToolbar();
     renderOverlay();
     renderInspector();
     refreshPreview();
@@ -822,15 +824,15 @@ function renderToolbar() {
     tb('−', 'Uitzoomen (-)', () => setZoom(-1)),
     tb('Passend', 'Passend maken (0)', () => setZoom(0), { active: zoom === 'fit' }),
     tb('+', 'Inzoomen (+)', () => setZoom(1)),
+    tb('🎯 Naar vakken', 'Inzoomen op de vakken van deze pagina (Z)', zoomToBoxes, { disabled: !has || !p?.boxes.length }),
     el('span', { class: 'sep' }),
     tb(preview ? '👁 Voorbeeld aan' : '👁 Voorbeeld', 'Toon hoe de uitvoer eruit ziet (P)', togglePreview, { active: preview }),
-    tb('🔍 Detecteer pagina', 'Deze pagina opnieuw automatisch detecteren (D)', () => cur && p && enqueue(cur, [p])),
-    tb('🗑 Vak wissen', 'Geselecteerd vak verwijderen (Delete)', deleteSelected, { disabled: !selBox }),
+    tb('🔍 Detecteer', 'Deze pagina opnieuw automatisch detecteren (D)', () => cur && p && enqueue(cur, [p])),
+    tb('🗑', 'Geselecteerd vak verwijderen (Delete)', deleteSelected, { disabled: !selBox }),
     tb('↶', 'Ongedaan maken (Ctrl+Z)', () => undo(), { disabled: !undoStack.length }),
     tb('↷', 'Opnieuw (Ctrl+Y)', () => undo(true), { disabled: !redoStack.length }),
-    el('span', { class: 'spacer' }),
-    el('span', { class: 'info' }, has ? 'Sleep op de pagina om een vak te tekenen' : ''),
   );
+  toolbar.title = has ? 'Tip: sleep op de pagina om een nieuw vak te tekenen' : '';
 }
 
 function setZoom(dir: number) {
@@ -844,6 +846,28 @@ function setZoom(dir: number) {
   }
   renderToolbar();
   renderEditor();
+}
+
+/** Zoom in op het gebied met vakken en scroll ernaartoe. */
+async function zoomToBoxes() {
+  const p = page();
+  if (!p || !p.boxes.length) return;
+  const x0 = Math.min(...p.boxes.map((b) => b.x));
+  const y0 = Math.min(...p.boxes.map((b) => b.y));
+  const x1 = Math.max(...p.boxes.map((b) => b.x + b.w));
+  const y1 = Math.max(...p.boxes.map((b) => b.y + b.h));
+  const pageWpx = p.wPt * (96 / 72);
+  const pageHpx = p.hPt * (96 / 72);
+  const fitW = (editor.clientWidth - 40) / ((x1 - x0 + 0.08) * pageWpx);
+  const fitH = (editor.clientHeight - 40) / ((y1 - y0 + 0.08) * pageHpx);
+  zoom = Math.min(4, Math.max(0.2, Math.min(fitW, fitH)));
+  renderToolbar();
+  await renderEditor();
+  if (!stage) return;
+  const sw = stage.offsetWidth;
+  const sh = stage.offsetHeight;
+  editor.scrollLeft = stage.offsetLeft + ((x0 + x1) / 2) * sw - editor.clientWidth / 2;
+  editor.scrollTop = stage.offsetTop + ((y0 + y1) / 2) * sh - editor.clientHeight / 2;
 }
 
 function togglePreview() {
@@ -1053,6 +1077,7 @@ function renderInspector() {
         el('dt', {}, el('kbd', {}, 'PgUp'), ' ', el('kbd', {}, 'PgDn')), el('dd', {}, 'Document'),
         el('dt', {}, el('kbd', {}, 'Del')), el('dd', {}, 'Vak wissen'),
         el('dt', {}, el('kbd', {}, 'P')), el('dd', {}, 'Voorbeeld'),
+        el('dt', {}, el('kbd', {}, 'Z')), el('dd', {}, 'Naar vakken zoomen'),
         el('dt', {}, el('kbd', {}, 'D')), el('dd', {}, 'Detecteer pagina'),
         el('dt', {}, el('kbd', {}, 'T')), el('dd', {}, 'Tekst in vak aan/uit'),
         el('dt', {}, el('kbd', {}, 'Ctrl+Z')), el('dd', {}, 'Ongedaan maken'),
