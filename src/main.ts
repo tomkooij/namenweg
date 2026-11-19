@@ -912,7 +912,24 @@ function emptyState() {
         el('li', {}, 'Controleer per pagina; teken zelf een vak door te slepen, of versleep/verklein een vak.'),
         el('li', {}, 'Exporteer: de vakken worden écht uit het beeld verwijderd en vervangen door "Kandidaat 67".'),
       ),
-      el('button', { class: 'btn primary', onclick: () => fileInput.click() }, 'Bestanden kiezen'),
+      el(
+        'div',
+        { style: 'display:flex;gap:8px;flex-wrap:wrap' },
+        el('button', { class: 'btn primary', onclick: () => fileInput.click() }, 'Bestanden kiezen'),
+        el(
+          'button',
+          {
+            class: 'btn',
+            title: 'Laadt drie neptoetsen met verzonnen namen, gemaakt in je browser',
+            onclick: async () => {
+              const { makeDemoFiles } = await import('./demo');
+              addFiles(await makeDemoFiles());
+            },
+          },
+          '🧪 Probeer met voorbeeld',
+        ),
+      ),
+      el('p', { class: 'note', style: 'margin-bottom:0' }, 'Het voorbeeld gebruikt verzonnen namen en wordt in je browser gemaakt.'),
     ),
   );
 }

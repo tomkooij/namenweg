@@ -4,10 +4,13 @@
 
 👉 **Gebruik de app: https://www.tomkooij.nl/namenweg/**
 
+![Controle-overzicht met voorbeeldtoetsen (verzonnen namen)](docs/controle-overzicht.jpg)
+
 Gescande toetsen bevatten persoonsgegevens. Wil je ze laten nakijken door een collega, delen voor
 een analyse of gebruiken als voorbeeld, dan moeten die gegevens eruit. NamenWeg doet dat:
 
-1. Sleep een of meer PDF's (of JPG/PNG-scans) in de app.
+1. Sleep een of meer PDF's (of JPG/PNG-scans) in de app – of klik op **🧪 Probeer met voorbeeld**
+   voor drie neptoetsen met verzonnen namen.
 2. De app zoekt **automatisch** naar voorgedrukte labels zoals *Naam kandidaat*, *Examen no.*,
    *Kandidaatnummer*, *Leerlingnummer* en *Klas*, en markeert de ingevulde vakken.
 3. Controleer per pagina, pas vakken aan of teken er zelf een.

@@ -91,8 +91,13 @@ export async function detectPage(
         text: false,
         label: `gezochte naam ("${f.text}")`,
       };
-      const inside = existing.some((e) => b.x >= e.x - 0.005 && b.y >= e.y - 0.005 && b.x + b.w <= e.x + e.w + 0.005 && b.y + b.h <= e.y + e.h + 0.005);
-      if (!inside) out.push(b);
+      // Valt het woord grotendeels (≥ 60%) in een bestaand vak, dan is het al afgedekt.
+      const covered = [...existing, ...out].some((e) => {
+        const ix = Math.max(0, Math.min(b.x + b.w, e.x + e.w) - Math.max(b.x, e.x));
+        const iy = Math.max(0, Math.min(b.y + b.h, e.y + e.h) - Math.max(b.y, e.y));
+        return ix * iy >= 0.6 * b.w * b.h;
+      });
+      if (!covered) out.push(b);
     }
     return out;
   };

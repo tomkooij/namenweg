@@ -7,6 +7,7 @@ scans/
 *.png
 !public/**/*.png
 !docs/**/*.png
+!docs/**/*.jpg
 sleutel*.csv
 *.csv
 
