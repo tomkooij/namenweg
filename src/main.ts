@@ -791,7 +791,10 @@ function attachOverlayEvents(ov: HTMLDivElement) {
     const dy = q.y - start.y;
     if (Math.abs(dx) + Math.abs(dy) > 0.002) moved = true;
     if (mode === 'draw' && draft) {
-      positionBox(draft, { x: Math.min(start.x, q.x), y: Math.min(start.y, q.y), w: Math.abs(dx), h: Math.abs(dy) } as Box);
+      // Shift: strook over de volle breedte
+      positionBox(draft, (e.shiftKey ? { x: 0, w: 1 } : { x: Math.min(start.x, q.x), w: Math.abs(dx) }) as Box);
+      draft.style.top = `${Math.min(start.y, q.y) * 100}%`;
+      draft.style.height = `${Math.abs(dy) * 100}%`;
       return;
     }
     const b = p.boxes.find((x) => x.id === selBox);
@@ -821,7 +824,9 @@ function attachOverlayEvents(ov: HTMLDivElement) {
       draft.remove();
       draft = null;
       const q = pos(e);
-      const r = { x: Math.min(start.x, q.x), y: Math.min(start.y, q.y), w: Math.abs(q.x - start.x), h: Math.abs(q.y - start.y) };
+      const r = e.shiftKey
+        ? { x: 0, y: Math.min(start.y, q.y), w: 1, h: Math.abs(q.y - start.y) }
+        : { x: Math.min(start.x, q.x), y: Math.min(start.y, q.y), w: Math.abs(q.x - start.x), h: Math.abs(q.y - start.y) };
       if (r.w > 0.006 && r.h > 0.004) {
         snapshot();
         const b: Box = { id: uid(), ...r, kind: 'handmatig', source: 'handmatig', rot: guessRot(p), text: !p.boxes.some((x) => x.text) && !!cur && pageNeedsText(cur, p) };
@@ -919,7 +924,7 @@ function renderToolbar() {
   const has = !!(cur && p);
   const n = cur?.pages.length ?? 0;
   const tb = (label: string, title: string, fn: () => void, opts: { disabled?: boolean; active?: boolean } = {}) =>
-    el('button', { class: 'btn small' + (opts.active ? ' active' : ''), title, onclick: fn, disabled: opts.disabled ?? !has }, label);
+    el('button', { class: 'btn small' + (opts.active ? ' active' : ''), title, 'aria-label': title, onclick: fn, disabled: opts.disabled ?? !has }, label);
   toolbar.replaceChildren(
     tb('◀', 'Vorige pagina (←)', () => gotoPage(curPage - 1), { disabled: !has || curPage === 0 }),
     el('span', { class: 'info' }, has ? `Pagina ${curPage + 1} / ${n}` : '–'),
@@ -1229,6 +1234,8 @@ function renderInspector() {
         el('dt', {}, el('kbd', {}, '←'), ' ', el('kbd', {}, '→')), el('dd', {}, 'Pagina'),
         el('dt', {}, el('kbd', {}, 'PgUp'), ' ', el('kbd', {}, 'PgDn')), el('dd', {}, 'Document'),
         el('dt', {}, el('kbd', {}, 'Del')), el('dd', {}, 'Vak wissen'),
+        el('dt', {}, el('kbd', {}, '←↑→↓')), el('dd', {}, 'Vak verschuiven (geselecteerd)'),
+        el('dt', {}, el('kbd', {}, 'Shift'), '+sleep'), el('dd', {}, 'Strook over volle breedte'),
         el('dt', {}, el('kbd', {}, 'P')), el('dd', {}, 'Voorbeeld'),
         el('dt', {}, el('kbd', {}, 'Z')), el('dd', {}, 'Naar vakken zoomen'),
         el('dt', {}, el('kbd', {}, 'R')), el('dd', {}, 'Pagina draaien'),
@@ -1837,7 +1844,21 @@ window.addEventListener('keydown', (e) => {
     undo(true);
   } else if (e.ctrlKey || e.metaKey || e.altKey) return;
   else if (e.key === 'Delete' || e.key === 'Backspace') deleteSelected();
-  else if (e.key === 'ArrowRight') gotoPage(curPage + 1);
+  else if (e.key.startsWith('Arrow') && selBox && p) {
+    // Geselecteerd vak verschuiven (Shift = grotere stap)
+    const b = p.boxes.find((x) => x.id === selBox);
+    if (!b) return;
+    e.preventDefault();
+    snapshot();
+    const step = e.shiftKey ? 0.01 : 0.002;
+    if (e.key === 'ArrowLeft') b.x = Math.max(0, b.x - step);
+    if (e.key === 'ArrowRight') b.x = Math.min(1 - b.w, b.x + step);
+    if (e.key === 'ArrowUp') b.y = Math.max(0, b.y - step);
+    if (e.key === 'ArrowDown') b.y = Math.min(1 - b.h, b.y + step);
+    markDirty();
+    renderOverlay();
+    refreshPreview();
+  } else if (e.key === 'ArrowRight') gotoPage(curPage + 1);
   else if (e.key === 'ArrowLeft') gotoPage(curPage - 1);
   else if (e.key === 'PageDown' || e.key === 'PageUp') {
     if (!cur) return;
