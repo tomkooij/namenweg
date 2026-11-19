@@ -386,9 +386,12 @@ function pumpDetect() {
         const n = detectDone;
         detectDone = detectTotal = 0;
         setProgress(0, 0);
+        void n;
         completeMissing().then((added) => {
+          const ok = docs.filter((x) => x.status === 'klaar');
+          const nBoxes = ok.reduce((a, x) => a + x.pages.reduce((b, p) => b + p.boxes.length, 0), 0);
           setStatus(
-            `Detectie klaar: ${n} controle(s) uitgevoerd${added ? `, ${added} vak(ken) aangevuld op basis van andere pagina's` : ''}. Controleer de vakken en exporteer.`,
+            `Detectie klaar: ${ok.length} document(en), ${nBoxes} vak(ken)${added ? `, waarvan ${added} aangevuld op basis van andere pagina's` : ''}. Controleer en exporteer.`,
           );
           checkWarnings();
           queueRotationChecks();
