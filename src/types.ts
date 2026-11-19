@@ -39,6 +39,8 @@ export interface PageState {
   userRot?: Rot;
   /** Door de gebruiker gecontroleerd en in orde bevonden. */
   checked?: boolean;
+  /** Gedraaide oriëntaties zijn al doorzocht (of niet nodig). */
+  rotChecked?: boolean;
 }
 
 export interface Settings {

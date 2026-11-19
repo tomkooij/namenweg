@@ -57,11 +57,17 @@ export function enhanceForOcr(src: HTMLCanvasElement, dpi: number): HTMLCanvasEl
 }
 
 
-export async function detectPage(canvas: HTMLCanvasElement, settings: Settings, names: string[] = []): Promise<DetectResult> {
+export async function detectPage(
+  canvas: HTMLCanvasElement,
+  settings: Settings,
+  names: string[] = [],
+  only?: Rot[],
+): Promise<DetectResult> {
   const phrases = parsePhrases(settings);
   const W = canvas.width;
   const H = canvas.height;
-  const rotations: Rot[] = settings.searchRotated ? [0, 90, 270, 180] : [0];
+  const rotations: Rot[] = only ?? (settings.searchRotated ? [0, 90, 270, 180] : [0]);
+  let upright = false;
   let words0: OcrWord[] = [];
 
   /** Losse naamwoorden (uit de bestandsnaam) die buiten de gevonden vakken staan. */
@@ -105,7 +111,10 @@ export async function detectPage(canvas: HTMLCanvasElement, settings: Settings, 
       // verder draaien heeft geen zin (bespaart veel tijd).
       if (r === 0) {
         const confident = words.filter((w) => w.conf >= 85 && norm(w.text).length >= 4).length;
-        if (confident >= 12) break;
+        if (confident >= 12) {
+          upright = true;
+          break;
+        }
       }
       continue;
     }
@@ -141,6 +150,7 @@ export async function detectPage(canvas: HTMLCanvasElement, settings: Settings, 
     const extra = nameBoxes(words, r, boxes);
     boxes = [...boxes, ...extra];
     return {
+      upright: r === 0,
       boxes,
       rotation: r,
       labels: personal.map((l) => l.text),
@@ -152,7 +162,7 @@ export async function detectPage(canvas: HTMLCanvasElement, settings: Settings, 
   const extra = nameBoxes(words0, 0, []);
   if (extra.length) {
     extra[0].text = true;
-    return { boxes: extra, rotation: 0, labels: [], note: `Geen labels, wel ${extra.length}× naam uit de bestandsnaam gevonden` };
+    return { upright, boxes: extra, rotation: 0, labels: [], note: `Geen labels, wel ${extra.length}× naam uit de bestandsnaam gevonden` };
   }
-  return { boxes: [], rotation: 0, labels: [], note: 'Geen labels gevonden' };
+  return { upright, boxes: [], rotation: 0, labels: [], note: 'Geen labels gevonden' };
 }

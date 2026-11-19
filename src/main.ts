@@ -307,7 +307,8 @@ function renumberAll() {
 
 // ───────────────────────── Detectie ─────────────────────────
 
-const detectQueue: { doc: Doc; page: PageState }[] = [];
+type Phase = 'rechtop' | 'gedraaid';
+const detectQueue: { doc: Doc; page: PageState; phase: Phase }[] = [];
 let detectRunning = 0;
 let detectTotal = 0;
 let detectDone = 0;
@@ -318,10 +319,13 @@ function dropFromQueue(d: Doc) {
 
 function enqueue(doc: Doc, pages: PageState[]) {
   for (const p of pages) {
-    if (detectQueue.some((j) => j.page === p)) continue;
+    if (detectQueue.some((j) => j.page === p && j.phase === 'rechtop')) continue;
     p.detect = 'bezig';
     p.detectNote = 'In de wachtrij…';
-    detectQueue.push({ doc, page: p });
+    p.rotChecked = false;
+    // Vóór eventuele achtergrondcontroles op gedraaide pagina's
+    const firstRot = detectQueue.findIndex((j) => j.phase === 'gedraaid');
+    detectQueue.splice(firstRot < 0 ? detectQueue.length : firstRot, 0, { doc, page: p, phase: 'rechtop' });
     detectTotal++;
   }
   pumpDetect();
@@ -344,6 +348,7 @@ function detectAll(force: boolean) {
 
 function stopDetect() {
   for (const j of detectQueue) {
+    if (j.phase === 'gedraaid') continue;
     j.page.detect = 'nog niet';
     j.page.detectNote = 'Detectie gestopt';
   }
@@ -362,9 +367,10 @@ function pumpDetect() {
   while (detectRunning < max && detectQueue.length) {
     const job = detectQueue.shift()!;
     detectRunning++;
-    runDetect(job.doc, job.page).finally(() => {
+    runDetect(job.doc, job.page, job.phase).finally(() => {
       detectRunning--;
       detectDone++;
+      const mainLeft = detectQueue.some((j) => j.phase === 'rechtop');
       if (!detectQueue.length && !detectRunning) {
         btnStop.hidden = true;
         const n = detectDone;
@@ -372,12 +378,18 @@ function pumpDetect() {
         setProgress(0, 0);
         completeMissing().then((added) => {
           setStatus(
-            `Detectie klaar: ${n} pagina('s) bekeken${added ? `, ${added} vak(ken) aangevuld op basis van andere pagina's` : ''}. Controleer de vakken en exporteer.`,
+            `Detectie klaar: ${n} controle(s) uitgevoerd${added ? `, ${added} vak(ken) aangevuld op basis van andere pagina's` : ''}. Controleer de vakken en exporteer.`,
           );
           checkWarnings();
+          queueRotationChecks();
         });
+      } else if (!mainLeft && detectQueue.every((j) => j.phase === 'gedraaid') && job.phase === 'rechtop' && !detectRunningMain()) {
+        // Fase 1 klaar: alvast aanvullen, gedraaide controles lopen op de achtergrond door.
+        completeMissing();
+        setStatus(`Rechtop klaar; nu controleren op gedraaide pagina's… ${detectDone}/${detectTotal}`);
+        setProgress(detectDone, detectTotal);
       } else {
-        setStatus(`Detecteren… ${detectDone}/${detectTotal} pagina's`);
+        setStatus(`${mainLeft || job.phase === 'rechtop' ? 'Detecteren' : "Controleren op gedraaide pagina's"}… ${detectDone}/${detectTotal}`);
         setProgress(detectDone, detectTotal);
       }
       pumpDetect();
@@ -385,14 +397,74 @@ function pumpDetect() {
   }
 }
 
-async function runDetect(doc: Doc, p: PageState) {
+let runningMain = 0;
+const detectRunningMain = () => runningMain > 0;
+
+/**
+ * Na de snelle eerste ronde (rechtop): pagina's zonder vakken, waarop ook geen duidelijk
+ * leesbare gedrukte tekst rechtop stond, alsnog gedraaid doorzoeken (op de achtergrond).
+ */
+function queueRotationChecks() {
+  if (!S.searchRotated) return;
+  let n = 0;
+  for (const d of docs) {
+    if (d.status !== 'klaar') continue;
+    for (const p of d.pages) {
+      if (p.rotChecked || p.boxes.length || p.checked || p.detect !== 'klaar') continue;
+      if (detectQueue.some((j) => j.page === p)) continue;
+      detectQueue.push({ doc: d, page: p, phase: 'gedraaid' });
+      detectTotal++;
+      n++;
+    }
+  }
+  if (n) {
+    setStatus(`Controleren op gedraaide pagina's (${n})…`);
+    pumpDetect();
+  }
+}
+
+async function runDetect(doc: Doc, p: PageState, phase: Phase) {
   if (!doc.src || !docs.includes(doc)) return;
+  if (phase === 'gedraaid') {
+    if (p.rotChecked || p.boxes.length || p.checked) return;
+    try {
+      const canvas = await doc.src.render(p.index, S.ocrDpi);
+      const res = await detectPage(canvas, S, nameTokensFromFileName(doc.name, S), [90, 270, 180]);
+      release(canvas);
+      p.rotChecked = true;
+      if (res.boxes.length && !p.boxes.length) {
+        p.boxes = [...p.boxes, ...res.boxes];
+        if (!p.boxes.some((b) => b.text)) {
+          const t = p.boxes.find((b) => b.kind === 'naam');
+          if (t) t.text = true;
+        }
+        p.detectNote = res.note;
+        doc.exported = false;
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    renderDocList();
+    if (doc === cur) {
+      renderStrip();
+      if (p.index === curPage) {
+        renderOverlay();
+        renderInspector();
+        renderToolbar();
+        refreshPreview();
+      }
+    }
+    return;
+  }
+  runningMain++;
   p.detectNote = 'Bezig met tekstherkenning…';
   if (doc === cur && p.index === curPage) renderInspector();
   try {
     const canvas = await doc.src.render(p.index, S.ocrDpi);
-    const res = await detectPage(canvas, S, nameTokensFromFileName(doc.name, S));
+    const res = await detectPage(canvas, S, nameTokensFromFileName(doc.name, S), [0]);
     release(canvas);
+    // Duidelijk rechtop (gedrukte tekst leesbaar) of al iets gevonden: niet gedraaid zoeken.
+    p.rotChecked = !!res.upright || res.boxes.length > 0;
     p.boxes = [...p.boxes.filter((b) => b.source === 'handmatig'), ...res.boxes];
     if (!p.boxes.some((b) => b.text)) {
       const t = p.boxes.find((b) => b.kind === 'naam');
@@ -404,6 +476,8 @@ async function runDetect(doc: Doc, p: PageState) {
     p.detect = 'fout';
     p.detectNote = 'Fout bij detectie: ' + (e instanceof Error ? e.message : String(e));
     console.error(e);
+  } finally {
+    runningMain--;
   }
   doc.exported = false;
   renderDocList();
@@ -1198,7 +1272,7 @@ function forbiddenTokens(d: Doc) {
 async function exportAll(list?: Doc[]) {
   const todo = (list ?? docs).filter((d) => d.status === 'klaar' && d.src);
   if (!todo.length) return;
-  const busy = docs.some((d) => d.pages.some((p) => p.detect === 'bezig'));
+  const busy = docs.some((d) => d.pages.some((p) => p.detect === 'bezig')) || detectQueue.length > 0 || detectRunning > 0;
   if (busy && !confirm('De detectie is nog bezig. Toch nu exporteren?')) return;
   const noName = todo.filter((d) => !d.pages.some((p) => p.boxes.length));
   if (noName.length && !confirm(`${noName.length} document(en) hebben geen enkel vak. Die worden zonder wijzigingen (maar wel als nieuwe afbeelding) geëxporteerd. Doorgaan?`)) return;

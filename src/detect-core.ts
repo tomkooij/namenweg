@@ -46,6 +46,8 @@ export interface PxRect {
 }
 
 export interface DetectResult {
+  /** Rechtop staat duidelijk leesbare gedrukte tekst: pagina is zeker niet gedraaid. */
+  upright?: boolean;
   boxes: Box[];
   note: string;
   rotation: Rot;
