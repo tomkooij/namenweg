@@ -38,7 +38,9 @@ async function start() {
       langPath: assetUrl('tesseract/lang'),
       workerBlobURL: false,
       gzip: false,
-      cacheMethod: 'none',
+      // Taalmodellen (openbare data, geen gebruikersgegevens) lokaal bewaren voor offline gebruik.
+      cacheMethod: 'write',
+      cachePath: 'namenweg-ocr',
     };
     const made = await Promise.all(
       Array.from({ length: wanted }, async () => {

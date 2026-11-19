@@ -1687,7 +1687,11 @@ renderAll();
 
 // Offline gebruik mogelijk maken (alleen in productie)
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
-  navigator.serviceWorker.register('./sw.js').catch(() => {});
+  if (new URLSearchParams(location.search).has('nosw')) {
+    navigator.serviceWorker.getRegistrations().then((rs) => rs.forEach((r) => r.unregister()));
+  } else {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  }
 }
 
 // Alleen tijdens ontwikkeling: ?demo=bestand1.pdf,bestand2.pdf laadt bestanden uit de lokale map scans/.
