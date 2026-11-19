@@ -17,7 +17,7 @@ await worker.setParameters({ tessedit_pageseg_mode: PSM.SPARSE_TEXT });
 
 const report: Record<string, { labels: string[]; regions: { kind: string; x0: number; y0: number; x1: number; y1: number; derived?: boolean }[] }> = {};
 const peers: (PeerPage & { f: string; W: number; H: number })[] = [];
-for (const f of readdirSync(dir).filter((f) => /^[a-z]+-\d+\.png$/.test(f) && f.includes(filter)).sort()) {
+for (const f of readdirSync(dir).filter((f) => /^[a-z0-9]+-\d+\.png$/.test(f) && f.includes(filter)).sort()) {
   const r = await worker.recognize(join(dir, f.replace('.png', '.enh.png')), {}, { blocks: true, text: false });
   const words: OcrWord[] = [];
   let line = 0;
@@ -48,7 +48,12 @@ for (const f of readdirSync(dir).filter((f) => /^[a-z]+-\d+\.png$/.test(f) && f.
 for (const { page, box } of completeFromPeers(peers)) {
   const pp = page as (typeof peers)[number];
   const png = PNG.sync.read(readFileSync(join(dir, pp.f)));
-  Object.assign(box, refineWithInk(new InkMask({ data: png.data, width: png.width, height: png.height }, 2), png.width, png.height, box));
+  const ref = refineWithInk(new InkMask({ data: png.data, width: png.width, height: png.height }, 2), png.width, png.height, box);
+  if (!ref) {
+    console.log('LEEG (overgeslagen)', pp.f, box.kind);
+    continue;
+  }
+  Object.assign(box, ref);
   const r = { kind: box.kind, x0: box.x * pp.W, y0: box.y * pp.H, x1: (box.x + box.w) * pp.W, y1: (box.y + box.h) * pp.H, derived: true };
   report[pp.f].regions.push(r);
   console.log('AANGEVULD', pp.f, box.kind, [r.x0, r.y0, r.x1, r.y1].map(Math.round).join(','), box.label);

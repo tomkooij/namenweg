@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test:render": "python test/render-pages.py .testdata",
-    "test:detect": "tsx test/detect-node.ts .testdata && python test/draw-report.py .testdata"
+    "test:detect": "tsx test/detect-node.ts .testdata && python test/draw-report.py .testdata",
+    "test:synthetic": "python test/make-synthetic.py .testdata-syn && tsx test/detect-node.ts .testdata-syn && python test/draw-report.py .testdata-syn"
   },
   "keywords": [],
   "author": "",

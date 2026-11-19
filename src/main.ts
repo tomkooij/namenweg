@@ -408,11 +408,12 @@ async function runDetect(doc: Doc, p: PageState) {
 async function completeMissing(): Promise<number> {
   const pages = docs.filter((d) => d.status === 'klaar').flatMap((d) => d.pages);
   const adds = completeFromPeers(pages);
+  let added = 0;
   for (const { page: pg, box } of adds) {
     const doc = docs.find((d) => (d.pages as unknown[]).includes(pg));
     const p = pg as PageState;
     if (!doc?.src) continue;
-    let refined = { x: box.x, y: box.y, w: box.w, h: box.h };
+    let refined: { x: number; y: number; w: number; h: number } | null = { x: box.x, y: box.y, w: box.w, h: box.h };
     try {
       const c = await doc.src.render(p.index, 100);
       const img = c.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, c.width, c.height);
@@ -421,11 +422,13 @@ async function completeMissing(): Promise<number> {
     } catch {
       /* dan het ruwe vak */
     }
+    if (!refined) continue; // leeg: niets te verbergen
+    added++;
     p.boxes.push({ ...box, ...refined, id: uid() });
     p.detectNote = (p.detectNote ?? '') + ` + ${KIND_LABEL[box.kind].toLowerCase()} aangevuld (afgeleid van andere pagina's)`;
     doc.exported = false;
   }
-  if (adds.length) {
+  if (added) {
     renderDocList();
     renderStrip();
     renderToolbar();
@@ -433,7 +436,7 @@ async function completeMissing(): Promise<number> {
     renderInspector();
     refreshPreview();
   }
-  return adds.length;
+  return added;
 }
 
 function checkWarnings() {

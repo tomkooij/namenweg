@@ -18,3 +18,4 @@ public/tesseract/
 .DS_Store
 public/pdfjs/
 .testdata/
+.testdata-syn/

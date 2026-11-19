@@ -418,7 +418,7 @@ export function regionsFor(labels: Label[], mask: InkMask, W: number, H: number,
       parts.push(below);
     } else if (right - L.x1 > 1.5 * h) {
       // Rechts van het label
-      const base: PxRect = { x0: L.x1 + 0.15 * h, y0: L.y0 - (L.kind === 'naam' ? 2 : 1.2) * h, x1: right, y1: L.y1 + 0.5 * h };
+      const base: PxRect = { x0: L.x1 + 0.15 * h, y0: L.y0 - (L.kind === 'naam' ? 1.5 : 1.2) * h, x1: right, y1: L.y1 + 0.5 * h };
       // Handschrift mag een stukje over een volgend label heen doorlopen, en hoge
       // hoofdletters/krullen steken vaak ver boven de regel uit.
       const win: PxRect = { x0: L.x0 - 1 * h, y0: L.y0 - 4 * h, x1: Math.min(W, right + 6 * h), y1: L.y1 + 1.6 * h };
@@ -434,7 +434,7 @@ export function regionsFor(labels: Label[], mask: InkMask, W: number, H: number,
         // Naamveld altijd verwijderen (ook als leeg), inclusief uitlopend handschrift.
         // Basisvak tot waar inkt staat + marge, maar minstens 22×h breed (ruim: een leeg
         // stuk kopregel wegpoetsen kan geen kwaad, een half naamvak wel).
-        const ink = grown ? Math.max(grown.x1 + 1.5 * h, L.x1 + 28 * h) : L.x1 + 28 * h;
+        const ink = grown ? Math.max(grown.x1 + 1.5 * h, L.x1 + 24 * h) : L.x1 + 24 * h;
         // Basisvak loopt van label tot (ruim) einde naam, zodat ook iets tussen label en naam weg is.
         parts.push(union({ ...base, x1: Math.min(right, ink) }, grown)!);
       } else if (grown && mask.count(seed) > 4) {
@@ -537,6 +537,8 @@ export function completeFromPeers(pages: PeerPage[], tol = 0.03): { page: PeerPa
         }
       if (!best) continue;
       for (const pb of pa) {
+        // Alleen soorten die op deze pagina nog helemaal ontbreken.
+        if (qa.some((b) => b.kind === pb.kind)) continue;
         const shifted = { x: pb.x + best.dx, y: pb.y + best.dy, w: pb.w, h: pb.h };
         // Bestaat er op q al een vak op die plek? Dan niets doen.
         if (q.boxes.some((b) => overlapArea(b, shifted) > 0.3 * shifted.w * shifted.h)) continue;
@@ -587,10 +589,12 @@ export function completeFromPeers(pages: PeerPage[], tol = 0.03): { page: PeerPa
 
 /**
  * Verfijn een (afgeleid) vak met de inkt op de pagina: alle inkt die het vak raakt, wordt
- * meegenomen binnen een venster dat 25% groter is. Werkt in genormaliseerde coördinaten.
+ * meegenomen binnen een venster dat 25% breder is. Geeft null als er geen inkt in het vak staat. Werkt in genormaliseerde coördinaten.
  */
 export function refineWithInk(mask: InkMask, W: number, H: number, b: { x: number; y: number; w: number; h: number }) {
   const r: PxRect = { x0: b.x * W, y0: b.y * H, x1: (b.x + b.w) * W, y1: (b.y + b.h) * H };
+  // Staat er niets in het voorspelde vak, dan is er ook niets te verbergen.
+  if (mask.count(r) < 6) return null;
   const ex = (r.x1 - r.x0) * 0.25;
   const ey = (r.y1 - r.y0) * 0.25;
   // Alleen opzij uitbreiden: boven/onder liggen vaak andere velden of de antwoorden.
