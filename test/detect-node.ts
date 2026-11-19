@@ -4,12 +4,13 @@ import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PNG } from 'pngjs';
 import { createWorker, PSM } from 'tesseract.js';
-import { refineWithInk, completeFromPeers, findLabels, InkMask, parsePhrases, regionsFor, type OcrWord, type PeerPage } from '../src/detect-core';
+import { findNameWords, nameTokensFromFileName, refineWithInk, completeFromPeers, findLabels, InkMask, parsePhrases, regionsFor, type OcrWord, type PeerPage } from '../src/detect-core';
 import { DEFAULT_SETTINGS } from '../src/types';
 
 const dir = process.argv[2];
 const filter = process.argv[3] ?? '';
 const S = DEFAULT_SETTINGS;
+const scanNames = readdirSync('scans');
 const phrases = parsePhrases(S);
 const worker = await createWorker('nld+eng', 1, { langPath: join(process.cwd(), 'public/tesseract/lang'), gzip: false, cacheMethod: 'none' });
 await worker.setParameters({ tessedit_pageseg_mode: PSM.SPARSE_TEXT });
@@ -30,6 +31,9 @@ for (const f of readdirSync(dir).filter((f) => /^[a-z]+-\d+\.png$/.test(f) && f.
   const png = PNG.sync.read(readFileSync(join(dir, f)));
   const mask = new InkMask({ data: png.data, width: png.width, height: png.height }, 2);
   const regions = regionsFor(labels, mask, png.width, png.height, S.padding);
+  const orig = scanNames.find((n) => n.startsWith(f.slice(0, 5))) ?? '';
+  const nameHits = findNameWords(words, nameTokensFromFileName(orig, S));
+  if (nameHits.length) console.log('  NAAM-WOORDEN', f, nameHits.map((n) => `${n.text}@${Math.round(n.rect.x0)},${Math.round(n.rect.y0)}`).join(' '));
   peers.push({
     f,
     W: png.width,

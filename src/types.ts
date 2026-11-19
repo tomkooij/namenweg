@@ -63,6 +63,7 @@ export interface Settings {
   detectKlas: boolean;
   padding: number;
   showLabels: boolean;
+  searchFileNames: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -91,4 +92,5 @@ export const DEFAULT_SETTINGS: Settings = {
   detectKlas: true,
   padding: 0.5,
   showLabels: true,
+  searchFileNames: true,
 };

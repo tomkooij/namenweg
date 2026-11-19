@@ -7,9 +7,9 @@
 //    begrensd door een maximaal venster rond het label.
 // 4. Vindt de OCR niets, dan wordt de pagina gedraaid (90°, 270°, 180°) en opnieuw gezocht.
 import type { Box, Rot, Settings } from './types';
-import { recognize } from './ocr';
+import { recognize, type OcrWord } from './ocr';
 import { uid } from './util';
-import { type DetectResult, findLabels, InkMask, mergeBoxes, norm, parsePhrases, regionsFor, unrotate } from './detect-core';
+import { type DetectResult, findNameWords, findLabels, InkMask, mergeBoxes, norm, parsePhrases, regionsFor, unrotate } from './detect-core';
 
 export { norm };
 export type { DetectResult };
@@ -70,17 +70,46 @@ function rotateCanvas(src: HTMLCanvasElement, r: Rot): HTMLCanvasElement {
   return c;
 }
 
-export async function detectPage(canvas: HTMLCanvasElement, settings: Settings): Promise<DetectResult> {
+export async function detectPage(canvas: HTMLCanvasElement, settings: Settings, names: string[] = []): Promise<DetectResult> {
   const phrases = parsePhrases(settings);
   const W = canvas.width;
   const H = canvas.height;
   const rotations: Rot[] = settings.searchRotated ? [0, 90, 270, 180] : [0];
+  let words0: OcrWord[] = [];
+
+  /** Losse naamwoorden (uit de bestandsnaam) die buiten de gevonden vakken staan. */
+  const nameBoxes = (words: OcrWord[], r: Rot, existing: Box[]): Box[] => {
+    if (!settings.searchFileNames || !names.length) return [];
+    const cw = r % 180 ? H : W;
+    const ch = r % 180 ? W : H;
+    const out: Box[] = [];
+    for (const f of findNameWords(words, names)) {
+      const rc = { x0: Math.max(0, f.rect.x0), y0: Math.max(0, f.rect.y0), x1: Math.min(cw, f.rect.x1), y1: Math.min(ch, f.rect.y1) };
+      const p = unrotate(rc, r, W, H);
+      const b: Box = {
+        id: uid(),
+        x: p.x0 / W,
+        y: p.y0 / H,
+        w: (p.x1 - p.x0) / W,
+        h: (p.y1 - p.y0) / H,
+        kind: 'naam',
+        source: 'auto',
+        rot: ((360 - r) % 360) as Rot,
+        text: false,
+        label: `naam uit bestandsnaam ("${f.text}")`,
+      };
+      const inside = existing.some((e) => b.x >= e.x - 0.005 && b.y >= e.y - 0.005 && b.x + b.w <= e.x + e.w + 0.005 && b.y + b.h <= e.y + e.h + 0.005);
+      if (!inside) out.push(b);
+    }
+    return out;
+  };
 
   for (const r of rotations) {
     const c = r ? rotateCanvas(canvas, r) : canvas;
     const enhanced = enhanceForOcr(c, settings.ocrDpi);
     const words = await recognize(enhanced);
     enhanced.width = enhanced.height = 0;
+    if (r === 0) words0 = words;
     const labels = findLabels(words, phrases);
     const personal = labels.filter((l) => l.kind !== 'stop');
     if (!personal.length) {
@@ -122,12 +151,21 @@ export async function detectPage(canvas: HTMLCanvasElement, settings: Settings):
       .filter((b) => b.kind === 'naam')
       .sort((a, b) => ((b as Box & { conf?: number }).conf ?? 0) - ((a as Box & { conf?: number }).conf ?? 0))[0];
     if (naam) naam.text = true;
+    const extra = nameBoxes(words, r, boxes);
+    boxes = [...boxes, ...extra];
     return {
       boxes,
       rotation: r,
       labels: personal.map((l) => l.text),
-      note: `${boxes.length} vak(ken) gevonden${r ? ` (pagina ${r}° gedraaid)` : ''}: ${[...new Set(personal.map((l) => l.text))].join(', ')}`,
+      note:
+        `${boxes.length} vak(ken) gevonden${r ? ` (pagina ${r}° gedraaid)` : ''}: ${[...new Set(personal.map((l) => l.text))].join(', ')}` +
+        (extra.length ? ` + ${extra.length}× naam elders op de pagina` : ''),
     };
+  }
+  const extra = nameBoxes(words0, 0, []);
+  if (extra.length) {
+    extra[0].text = true;
+    return { boxes: extra, rotation: 0, labels: [], note: `Geen labels, wel ${extra.length}× naam uit de bestandsnaam gevonden` };
   }
   return { boxes: [], rotation: 0, labels: [], note: 'Geen labels gevonden' };
 }

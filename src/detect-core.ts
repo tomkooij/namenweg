@@ -605,3 +605,45 @@ export function refineWithInk(mask: InkMask, W: number, H: number, b: { x: numbe
   const y1 = Math.min(H, u.y1 + (g && g.y1 > r.y1 ? pad : 0));
   return { x: x0 / W, y: y0 / H, w: (x1 - x0) / W, h: (y1 - y0) / H };
 }
+
+/** Woorden uit een bestandsnaam die als (deel van een) naam kunnen dienen. */
+export function nameTokensFromFileName(fileName: string, s: Settings): string[] {
+  const skip = new Set(
+    [s.kwNaam, s.kwNummer, s.kwKlas, s.kwStop]
+      .join(',')
+      .split(/[,\s]+/)
+      .map(norm)
+      .concat(['scan', 'toets', 'pdf', 'kopie', 'copy', 'page', 'pagina', 'versie', 'final', 'def', 'uitwerking', 'antwoorden', 'herkansing', 'proefwerk', 'examen', 'natuurkunde', 'wiskunde', 'scheikunde', 'biologie', 'engels', 'frans', 'duits', 'nederlands', 'geschiedenis', 'aardrijkskunde', 'economie']),
+  );
+  return [
+    ...new Set(
+      fileName
+        .replace(/\.[^.]+$/, '')
+        .split(/[\s_\-.,()]+/)
+        .map(norm)
+        .filter((t) => t.length >= 4 && !/\d/.test(t) && !skip.has(t)),
+    ),
+  ];
+}
+
+/**
+ * Zoek OCR-woorden die (bijna) gelijk zijn aan een naam uit de bestandsnaam, waar ook op de
+ * pagina. Geeft rechthoeken (pixels) terug met wat marge.
+ */
+export function findNameWords(words: OcrWord[], names: string[]): { rect: PxRect; text: string }[] {
+  const out: { rect: PxRect; text: string }[] = [];
+  if (!names.length) return out;
+  for (const w of words) {
+    const n = norm(w.text);
+    if (n.length < 3 || w.conf < 45) continue;
+    const hit = names.some((name) => {
+      if (n === name) return true;
+      const max = name.length >= 7 ? 2 : 1;
+      return Math.abs(n.length - name.length) <= max && lev(n, name, max) <= max;
+    });
+    if (!hit) continue;
+    const h = Math.max(8, w.y1 - w.y0);
+    out.push({ rect: { x0: w.x0 - 0.5 * h, y0: w.y0 - 0.6 * h, x1: w.x1 + 0.5 * h, y1: w.y1 + 0.6 * h }, text: w.text });
+  }
+  return out;
+}

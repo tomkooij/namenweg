@@ -3,7 +3,7 @@ import { zipSync } from 'fflate';
 import { DEFAULT_SETTINGS, type Box, type BoxKind, type PageState, type Rot, type Settings } from './types';
 import { openFile, isSupported, release, type Source } from './pdfio';
 import { detectPage, norm } from './detect';
-import { completeFromPeers, InkMask, refineWithInk } from './detect-core';
+import { completeFromPeers, InkMask, nameTokensFromFileName, refineWithInk } from './detect-core';
 import { setWorkerCount, defaultWorkerCount, onOcrStatus } from './ocr';
 import { applyRedactions, exportDocument, verifyOutput, combineDocuments, type VerifyResult } from './redact';
 import { el, uid, uniqueNumber, fillTemplate, safeFileName, download, toCsv, fmtBytes } from './util';
@@ -374,7 +374,7 @@ async function runDetect(doc: Doc, p: PageState) {
   if (doc === cur && p.index === curPage) renderInspector();
   try {
     const canvas = await doc.src.render(p.index, S.ocrDpi);
-    const res = await detectPage(canvas, S);
+    const res = await detectPage(canvas, S, nameTokensFromFileName(doc.name, S));
     release(canvas);
     p.boxes = [...p.boxes.filter((b) => b.source === 'handmatig'), ...res.boxes];
     if (!p.boxes.some((b) => b.text)) {
@@ -1512,6 +1512,7 @@ function openSettings() {
         check('autoDetect', 'Automatisch detecteren na het toevoegen van bestanden'),
         check('detectNummer', 'Examen-/leerlingnummer verwijderen'),
         check('detectKlas', 'Klas verwijderen'),
+        check('searchFileNames', 'Ook zoeken naar de naam uit de bestandsnaam, overal op de pagina', 'Heet het bestand bijv. "jansen piet.pdf", dan worden de woorden "jansen" en "piet" overal op de pagina gezocht (werkt het best bij duidelijk schrift).'),
         check('searchRotated', 'Ook zoeken in gedraaide pagina\'s (90°/180°/270°)', 'Alleen als er rechtop niets gevonden wordt. Kost wat extra tijd.'),
         text('kwNaam', 'Labels voor naam', 'Gescheiden door komma\'s. Hoofdletters en kleine OCR-fouten maken niet uit.', true),
         text('kwNummer', 'Labels voor nummer', undefined, true),
@@ -1579,13 +1580,15 @@ function openHelp(section?: string) {
       el('p', {}, 'Na de export controleert de app elk bestand automatisch: geen tekstlaag, één afbeelding per pagina, en de oorspronkelijke bestandsnaam komt nergens in het bestand voor.'),
       el('h3', {}, '🔍 Automatische detectie'),
       el('p', {}, 'De app leest de voorgedrukte tekst op elke pagina en zoekt labels zoals "Naam kandidaat", "Examen no.", "Leerlingnummer" en "Klas". Vanaf het label groeit het vak mee met het handschrift en eventuele invulhokjes. Staat er rechtop niets, dan wordt de pagina gedraaid bekeken (handig voor liggende uitwerkbijlagen).'),
-      el('p', {}, 'Handgeschreven namen zónder voorgedrukt label kunnen niet automatisch gevonden worden. Controleer daarom altijd even de miniaturen en gebruik "Voorbeeld" om het resultaat te zien.'),
+      el('p', {}, 'Mist de tekstherkenning een label op één pagina (bijv. "Examen no."), dan vult de app het vak aan op basis van dezelfde kop op andere pagina's. Zulke vakken zijn gemarkeerd als "afgeleid". Ook wordt de naam uit de bestandsnaam (bijv. "jansen piet.pdf") overal op de pagina gezocht.'),
+      el('p', {}, 'Handgeschreven namen zónder voorgedrukt label kunnen niet altijd automatisch gevonden worden. Controleer daarom altijd het resultaat met het 🔎 Controle-overzicht of de knop "Voorbeeld".'),
       el('h3', {}, '✏ Handmatig aanpassen'),
       el('ul', {},
         el('li', {}, 'Sleep op een lege plek om een nieuw vak te tekenen.'),
         el('li', {}, 'Sleep een vak om het te verplaatsen; gebruik de hoekjes om het groter of kleiner te maken.'),
         el('li', {}, 'Dubbelklik op een vak om daar de vervangende tekst ("Kandidaat 67") te plaatsen.'),
         el('li', {}, 'Staat het naamvak bij iedereen op dezelfde plek? Teken het één keer en gebruik "Vakken kopiëren".'),
+        el('li', {}, 'Gebruik je vaker hetzelfde antwoordblad? Sla de vakken op als 📐 sjabloon.'),
       ),
       el('h3', {}, '🗝 Sleutelbestand'),
       el('p', {}, 'Wil je later terugvinden wie "Kandidaat 67" was, download dan het sleutelbestand (CSV). Daarin staat welk nummer bij welk origineel bestand hoort. Bewaar dit bestand apart en veilig.'),
