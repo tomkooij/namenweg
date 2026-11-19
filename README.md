@@ -52,12 +52,17 @@ pagina, en geen namen of de oorspronkelijke bestandsnaam in de metadata (Info en
 - Vakken groeien mee met het handschrift en met invulhokjes onder een label
 - Vangnet: mist de OCR een label op één pagina, dan wordt het vak aangevuld op basis van
   dezelfde kop op andere pagina's/documenten
-- Zoekt de naam uit de bestandsnaam (bijv. `jansen piet.pdf`) ook elders op de pagina
+- Zoekt de naam uit de bestandsnaam (bijv. `jansen piet.pdf`) ook elders op de pagina, net als
+  een optionele namenlijst (bijv. de hele klas; wordt nooit opgeslagen)
+- Tweede OCR-ronde zonder gekleurde inkt als handschrift het naamlabel onleesbaar maakt
 - Werkt ook op gedraaide pagina's (bijv. liggende uitwerkbijlagen)
 - Controle-overzicht: van elke pagina een uitsnede van het eindresultaat in één scherm
 - Waarschuwing als een pagina geen vak heeft terwijl dezelfde pagina bij anderen wel vakken heeft
 - Sjablonen: vaklayout opslaan en op een volgende klas toepassen (alleen posities, geen namen)
-- Vakken tekenen, verplaatsen, schalen, verwijderen; ongedaan maken/opnieuw
+- Vakken tekenen, verplaatsen (ook met pijltjestoetsen), schalen, verwijderen; ongedaan
+  maken/opnieuw; Shift+slepen voor een strook over de volle breedte
+- Pagina's draaien (vakken draaien mee), inzoomen op de vakken, pagina's als gecontroleerd markeren
+- Snelle detectie in twee fasen: eerst rechtop, daarna op de achtergrond gedraaide pagina's
 - Vakken kopiëren naar alle pagina's / alle documenten
 - Willekeurige, unieke kandidaatnummers (niet herleidbaar uit de volgorde)
 - Instelbare vervangende tekst (`Kandidaat {n}`), kleur, hoekstempel op elke pagina
