@@ -70,9 +70,9 @@ export async function detectPage(
   let upright = false;
   let words0: OcrWord[] = [];
 
-  /** Losse naamwoorden (uit de bestandsnaam) die buiten de gevonden vakken staan. */
+  /** Losse naamwoorden (bestandsnaam / namenlijst) die buiten de gevonden vakken staan. */
   const nameBoxes = (words: OcrWord[], r: Rot, existing: Box[]): Box[] => {
-    if (!settings.searchFileNames || !names.length) return [];
+    if (!names.length) return [];
     const cw = r % 180 ? H : W;
     const ch = r % 180 ? W : H;
     const out: Box[] = [];
@@ -89,7 +89,7 @@ export async function detectPage(
         source: 'auto',
         rot: ((360 - r) % 360) as Rot,
         text: false,
-        label: `naam uit bestandsnaam ("${f.text}")`,
+        label: `gezochte naam ("${f.text}")`,
       };
       const inside = existing.some((e) => b.x >= e.x - 0.005 && b.y >= e.y - 0.005 && b.x + b.w <= e.x + e.w + 0.005 && b.y + b.h <= e.y + e.h + 0.005);
       if (!inside) out.push(b);
@@ -162,7 +162,7 @@ export async function detectPage(
   const extra = nameBoxes(words0, 0, []);
   if (extra.length) {
     extra[0].text = true;
-    return { upright, boxes: extra, rotation: 0, labels: [], note: `Geen labels, wel ${extra.length}× naam uit de bestandsnaam gevonden` };
+    return { upright, boxes: extra, rotation: 0, labels: [], note: `Geen labels, wel ${extra.length}× een gezochte naam gevonden` };
   }
   return { upright, boxes: [], rotation: 0, labels: [], note: 'Geen labels gevonden' };
 }

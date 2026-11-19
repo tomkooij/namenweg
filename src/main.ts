@@ -54,6 +54,16 @@ let selBox: string | null = null;
 let zoom: number | 'fit' = 'fit';
 let preview = false;
 let lastExport: ExportResult[] = [];
+/** Extra namen om te zoeken (bijv. een klassenlijst). Alleen in het geheugen, nooit opgeslagen. */
+let extraNames = '';
+
+function namesFor(d: Doc): string[] {
+  const own = S.searchFileNames ? nameTokensFromFileName(d.name, S) : [];
+  const extra = extraNames
+    .split(/[\n,;]+/)
+    .flatMap((line) => nameTokensFromFileName(line.trim() + '.x', S));
+  return [...new Set([...own, ...extra])];
+}
 
 type Snap = { doc: Doc; page: number; boxes: Box[] };
 const undoStack: Snap[] = [];
@@ -429,7 +439,7 @@ async function runDetect(doc: Doc, p: PageState, phase: Phase) {
     if (p.rotChecked || p.boxes.length || p.checked) return;
     try {
       const canvas = await doc.src.render(p.index, S.ocrDpi);
-      const res = await detectPage(canvas, S, nameTokensFromFileName(doc.name, S), [90, 270, 180]);
+      const res = await detectPage(canvas, S, namesFor(doc), [90, 270, 180]);
       release(canvas);
       p.rotChecked = true;
       if (res.boxes.length && !p.boxes.length) {
@@ -461,7 +471,7 @@ async function runDetect(doc: Doc, p: PageState, phase: Phase) {
   if (doc === cur && p.index === curPage) renderInspector();
   try {
     const canvas = await doc.src.render(p.index, S.ocrDpi);
-    const res = await detectPage(canvas, S, nameTokensFromFileName(doc.name, S), [0]);
+    const res = await detectPage(canvas, S, namesFor(doc), [0]);
     release(canvas);
     // Duidelijk rechtop (gedrukte tekst leesbaar) of al iets gevonden: niet gedraaid zoeken.
     p.rotChecked = !!res.upright || res.boxes.length > 0;
@@ -1641,10 +1651,21 @@ function openSettings() {
     return el('div', { class: 'field' }, el('label', {}, label), s);
   };
   const color = el('input', { type: 'color', value: draft.textColor }) as HTMLInputElement;
+  const namesArea = el('textarea', { placeholder: 'Bijv. een klassenlijst, één naam per regel', rows: '4' }) as HTMLTextAreaElement;
+  namesArea.value = extraNames;
+  const namesField = el(
+    'div',
+    { class: 'field' },
+    el('label', {}, 'Extra namen om overal te zoeken'),
+    namesArea,
+    el('div', { class: 'note' }, 'Wordt NIET opgeslagen: na sluiten van het tabblad is de lijst weg. Woorden van minstens 4 letters worden gezocht.'),
+  );
   color.addEventListener('input', () => (draft.textColor = color.value));
 
   const save = () => {
     const oldKw = [S.kwNaam, S.kwNummer, S.kwKlas, S.kwStop, S.detectKlas, S.detectNummer, S.searchRotated, S.padding, S.ocrDpi].join('|');
+    const namesChanged = extraNames !== namesArea.value;
+    extraNames = namesArea.value;
     Object.assign(S, draft);
     if (S.numMax < S.numMin) [S.numMin, S.numMax] = [S.numMax, S.numMin];
     saveSettings();
@@ -1652,7 +1673,7 @@ function openSettings() {
     dlg.close();
     renderAll();
     const newKw = [S.kwNaam, S.kwNummer, S.kwKlas, S.kwStop, S.detectKlas, S.detectNummer, S.searchRotated, S.padding, S.ocrDpi].join('|');
-    if (oldKw !== newKw && docs.length) toast('Detectie-instellingen gewijzigd. Klik "Detecteer alles opnieuw" om ze toe te passen.');
+    if ((oldKw !== newKw || namesChanged) && docs.length) toast('Detectie-instellingen gewijzigd. Klik "Detecteer alles opnieuw" om ze toe te passen.');
   };
 
   dlg.append(
@@ -1682,6 +1703,7 @@ function openSettings() {
         check('detectNummer', 'Examen-/leerlingnummer verwijderen'),
         check('detectKlas', 'Klas verwijderen'),
         check('searchFileNames', 'Ook zoeken naar de naam uit de bestandsnaam, overal op de pagina', 'Heet het bestand bijv. "jansen piet.pdf", dan worden de woorden "jansen" en "piet" overal op de pagina gezocht (werkt het best bij duidelijk schrift).'),
+        namesField,
         check('searchRotated', 'Ook zoeken in gedraaide pagina\'s (90°/180°/270°)', 'Alleen als er rechtop niets gevonden wordt. Kost wat extra tijd.'),
         text('kwNaam', 'Labels voor naam', 'Gescheiden door komma\'s. Hoofdletters en kleine OCR-fouten maken niet uit.', true),
         text('kwNummer', 'Labels voor nummer', undefined, true),
