@@ -8,6 +8,7 @@
 // 4. Vindt de OCR niets, dan wordt de pagina gedraaid (90°, 270°, 180°) en opnieuw gezocht.
 import type { Box, Rot, Settings } from './types';
 import { recognize, type OcrWord } from './ocr';
+import { rotateCanvas } from './pdfio';
 import { uid } from './util';
 import { type DetectResult, findNameWords, findLabels, InkMask, mergeBoxes, norm, parsePhrases, regionsFor, unrotate } from './detect-core';
 
@@ -55,20 +56,6 @@ export function enhanceForOcr(src: HTMLCanvasElement, dpi: number): HTMLCanvasEl
   return c;
 }
 
-function rotateCanvas(src: HTMLCanvasElement, r: Rot): HTMLCanvasElement {
-  const c = document.createElement('canvas');
-  const W = src.width;
-  const H = src.height;
-  c.width = r % 180 ? H : W;
-  c.height = r % 180 ? W : H;
-  const ctx = c.getContext('2d', { willReadFrequently: true })!;
-  if (r === 90) ctx.translate(H, 0);
-  else if (r === 180) ctx.translate(W, H);
-  else if (r === 270) ctx.translate(0, W);
-  ctx.rotate((r * Math.PI) / 180);
-  ctx.drawImage(src, 0, 0);
-  return c;
-}
 
 export async function detectPage(canvas: HTMLCanvasElement, settings: Settings, names: string[] = []): Promise<DetectResult> {
   const phrases = parsePhrases(settings);

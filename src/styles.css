@@ -549,6 +549,11 @@ aside.right {
 .thumb .badge.busy {
   background: var(--muted);
 }
+.thumb .badge.ok {
+  right: auto;
+  left: 4px;
+  background: var(--ok);
+}
 
 /* Inspector */
 .field {
@@ -758,23 +763,38 @@ body.dragging::after {
 }
 
 @media (max-width: 1100px) {
-  main.layout {
-    grid-template-columns: 260px 1fr;
-  }
-  aside.right {
-    grid-column: 1 / -1;
-    border-left: 0;
-    border-top: 1px solid var(--border);
-    max-height: 40vh;
-  }
-}
-@media (max-width: 720px) {
   #app {
     height: auto;
     min-height: 100%;
   }
   main.layout {
+    grid-template-columns: 260px 1fr;
+  }
+  main.layout > aside:first-child,
+  .center {
+    height: calc(100vh - 92px);
+    min-height: 480px;
+  }
+  aside.right {
+    grid-column: 1 / -1;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    align-items: start;
+  }
+  aside.right .section {
+    border-bottom: 0;
+  }
+}
+@media (max-width: 720px) {
+  main.layout {
     grid-template-columns: 1fr;
+  }
+  main.layout > aside:first-child,
+  .center {
+    height: auto;
+    min-height: 0;
   }
   aside {
     border-right: 0;

@@ -1,7 +1,7 @@
 import './styles.css';
 import { zipSync } from 'fflate';
 import { DEFAULT_SETTINGS, type Box, type BoxKind, type PageState, type Rot, type Settings } from './types';
-import { openFile, isSupported, release, type Source } from './pdfio';
+import { openFile, isSupported, release, withRotation, type Source } from './pdfio';
 import { detectPage, norm } from './detect';
 import { completeFromPeers, InkMask, nameTokensFromFileName, refineWithInk } from './detect-core';
 import { setWorkerCount, defaultWorkerCount, onOcrStatus } from './ocr';
@@ -95,6 +95,7 @@ const inspector = el('aside', { class: 'right' });
 const statusMsg = el('span', {}, 'Klaar. Voeg PDF-bestanden toe om te beginnen.');
 const progressBar = el('div');
 const progress = el('div', { class: 'progress', hidden: true }, progressBar);
+const btnStop = el('button', { class: 'btn small', hidden: true, onclick: () => stopDetect(), title: 'Automatische detectie stoppen' }, '⏹ Stop');
 const themeBtn = el('button', { class: 'btn icon', title: 'Licht/donker thema', onclick: cycleTheme });
 
 const btnDetectAll = el('button', { class: 'btn', onclick: () => detectAll(true) }, '🔍 Detecteer alles opnieuw');
@@ -147,7 +148,7 @@ app.append(
     el('section', { class: 'center' }, toolbar, editor, strip),
     inspector,
   ),
-  el('footer', { class: 'status' }, statusMsg, el('div', { class: 'spacer' }), progress),
+  el('footer', { class: 'status' }, statusMsg, el('div', { class: 'spacer' }), btnStop, progress),
 );
 
 fileInput.addEventListener('change', () => {
@@ -231,7 +232,7 @@ async function addFiles(files: File[]) {
     setStatus(`Inlezen: ${++i}/${added.length}…`);
     setProgress(i - 1, added.length);
     try {
-      d.src = await openFile(d.file);
+      d.src = withRotation(await openFile(d.file), (i) => d.pages[i]?.userRot ?? 0);
       d.pages = d.src.sizes.map((s, index) => ({ index, wPt: s.w, hPt: s.h, boxes: [], detect: 'nog niet' }));
       d.status = 'klaar';
     } catch (e) {
@@ -341,7 +342,22 @@ function detectAll(force: boolean) {
   detectDocs(list);
 }
 
+function stopDetect() {
+  for (const j of detectQueue) {
+    j.page.detect = 'nog niet';
+    j.page.detectNote = 'Detectie gestopt';
+  }
+  detectTotal -= detectQueue.length;
+  detectQueue.length = 0;
+  setStatus("Detectie gestopt (pagina's die al bezig waren worden nog afgemaakt).");
+  btnStop.hidden = true;
+  renderDocList();
+  renderStrip();
+  renderInspector();
+}
+
 function pumpDetect() {
+  btnStop.hidden = !(detectQueue.length || detectRunning);
   const max = S.ocrWorkers > 0 ? S.ocrWorkers : defaultWorkerCount();
   while (detectRunning < max && detectQueue.length) {
     const job = detectQueue.shift()!;
@@ -350,6 +366,7 @@ function pumpDetect() {
       detectRunning--;
       detectDone++;
       if (!detectQueue.length && !detectRunning) {
+        btnStop.hidden = true;
         const n = detectDone;
         detectDone = detectTotal = 0;
         setProgress(0, 0);
@@ -472,7 +489,7 @@ function suspiciousPages(d: Doc): number[] {
   const others = docs.filter((o) => o !== d && o.status === 'klaar');
   if (others.length < 2) return [];
   return d.pages
-    .filter((p) => !p.boxes.length && p.detect !== 'bezig')
+    .filter((p) => !p.boxes.length && p.detect !== 'bezig' && !p.checked)
     .filter((p) => {
       const withBoxes = others.filter((o) => o.pages[p.index]?.boxes.length).length;
       return withBoxes / others.length >= 0.6;
@@ -582,7 +599,7 @@ async function renderEditor() {
 
   const dpr = window.devicePixelRatio || 1;
   const dpi = Math.min(220, Math.max(40, Math.round(((w * dpr) / p.wPt) * 72 / 10) * 10));
-  const key = `${cur.id}:${p.index}:${dpi}`;
+  const key = `${cur.id}:${p.index}:${p.userRot ?? 0}:${dpi}`;
   const token = ++renderToken;
   let c = cacheGet(key);
   if (!c) {
@@ -831,6 +848,8 @@ function renderToolbar() {
     el('span', { class: 'sep' }),
     tb(preview ? '👁 Voorbeeld aan' : '👁 Voorbeeld', 'Toon hoe de uitvoer eruit ziet (P)', togglePreview, { active: preview }),
     tb('🔍 Detecteer', 'Deze pagina opnieuw automatisch detecteren (D)', () => cur && p && enqueue(cur, [p])),
+    tb('⟲', 'Pagina linksom draaien (Shift+R)', () => rotatePage(-1)),
+    tb('⟳', 'Pagina rechtsom draaien (R)', () => rotatePage(1)),
     tb('🗑', 'Geselecteerd vak verwijderen (Delete)', deleteSelected, { disabled: !selBox }),
     tb('↶', 'Ongedaan maken (Ctrl+Z)', () => undo(), { disabled: !undoStack.length }),
     tb('↷', 'Opnieuw (Ctrl+Y)', () => undo(true), { disabled: !redoStack.length }),
@@ -849,6 +868,38 @@ function setZoom(dir: number) {
   }
   renderToolbar();
   renderEditor();
+}
+
+/** Vak meedraaien met de pagina (90° of 270° met de klok mee). */
+function rotBox(b: Box, delta: 90 | 270): Box {
+  const r: Box = { ...b, w: b.h, h: b.w, rot: ((b.rot + delta) % 360) as Rot };
+  if (delta === 90) {
+    r.x = 1 - (b.y + b.h);
+    r.y = b.x;
+    if (b.ax !== undefined && b.ay !== undefined) [r.ax, r.ay] = [1 - b.ay, b.ax];
+  } else {
+    r.x = b.y;
+    r.y = 1 - (b.x + b.w);
+    if (b.ax !== undefined && b.ay !== undefined) [r.ax, r.ay] = [b.ay, 1 - b.ax];
+  }
+  return r;
+}
+
+/** Draai de huidige pagina een kwartslag; vakken draaien mee. */
+function rotatePage(dir: 1 | -1) {
+  const p = page();
+  if (!cur || !p) return;
+  const delta = dir > 0 ? 90 : 270;
+  p.userRot = (((p.userRot ?? 0) + delta) % 360) as Rot;
+  p.boxes = p.boxes.map((b) => rotBox(b, delta));
+  [p.wPt, p.hPt] = [p.hPt, p.wPt];
+  p.thumb = undefined;
+  // Ongedaan-maken van vakken op deze pagina past niet meer bij de nieuwe stand.
+  for (const st of [undoStack, redoStack])
+    for (let i = st.length - 1; i >= 0; i--) if (st[i].doc === cur && st[i].page === curPage) st.splice(i, 1);
+  cur.exported = false;
+  makeThumbs(cur);
+  renderAll();
 }
 
 /** Zoom in op het gebied met vakken en scroll ernaartoe. */
@@ -906,6 +957,7 @@ function renderStrip() {
         { class: 'thumb' + (p.index === curPage ? ' sel' : ''), onclick: () => gotoPage(p.index), title: p.detectNote ?? '' },
         p.thumb ? el('img', { src: p.thumb, alt: `Pagina ${p.index + 1}` }) : el('div', { style: 'width:100px;height:72px' }),
         el('span', { class: 'n' }, String(p.index + 1)),
+        p.checked ? el('span', { class: 'badge ok', title: 'Gecontroleerd' }, '✓') : null,
         p.detect === 'bezig'
           ? el('span', { class: 'badge busy' }, '…')
           : p.boxes.length
@@ -1053,6 +1105,20 @@ function renderInspector() {
         el('div', { style: 'display:grid;gap:6px;margin-top:10px' },
           el('button', { class: 'btn small', onclick: () => enqueue(d, [p]), disabled: p.detect === 'bezig' }, '🔍 Deze pagina detecteren'),
           el('button', { class: 'btn small', onclick: () => clearPageBoxes(false), disabled: !p.boxes.length }, 'Vakken op deze pagina wissen'),
+          el(
+            'button',
+            {
+              class: 'btn small' + (p.checked ? ' active' : ''),
+              title: 'Markeer deze pagina als gecontroleerd (zet waarschuwingen uit)',
+              onclick: () => {
+                p.checked = !p.checked;
+                renderDocList();
+                renderStrip();
+                renderInspector();
+              },
+            },
+            p.checked ? '✓ Gecontroleerd' : 'Markeer als gecontroleerd',
+          ),
         ),
       ),
       el(
@@ -1081,6 +1147,7 @@ function renderInspector() {
         el('dt', {}, el('kbd', {}, 'Del')), el('dd', {}, 'Vak wissen'),
         el('dt', {}, el('kbd', {}, 'P')), el('dd', {}, 'Voorbeeld'),
         el('dt', {}, el('kbd', {}, 'Z')), el('dd', {}, 'Naar vakken zoomen'),
+        el('dt', {}, el('kbd', {}, 'R')), el('dd', {}, 'Pagina draaien'),
         el('dt', {}, el('kbd', {}, 'D')), el('dd', {}, 'Detecteer pagina'),
         el('dt', {}, el('kbd', {}, 'T')), el('dd', {}, 'Tekst in vak aan/uit'),
         el('dt', {}, el('kbd', {}, 'Ctrl+Z')), el('dd', {}, 'Ongedaan maken'),
@@ -1687,6 +1754,8 @@ window.addEventListener('keydown', (e) => {
     }
     e.preventDefault();
   } else if (e.key === 'p' || e.key === 'P') togglePreview();
+  else if (e.key === 'z' || e.key === 'Z') zoomToBoxes();
+  else if (e.key === 'r' || e.key === 'R') rotatePage(e.shiftKey ? -1 : 1);
   else if ((e.key === 'd' || e.key === 'D') && cur && p) enqueue(cur, [p]);
   else if ((e.key === 't' || e.key === 'T') && p && selBox) {
     const b = p.boxes.find((x) => x.id === selBox);

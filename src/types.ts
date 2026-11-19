@@ -35,6 +35,10 @@ export interface PageState {
   detect: DetectState;
   detectNote?: string;
   thumb?: string;
+  /** Extra rotatie door de gebruiker (met de klok mee). */
+  userRot?: Rot;
+  /** Door de gebruiker gecontroleerd en in orde bevonden. */
+  checked?: boolean;
 }
 
 export interface Settings {

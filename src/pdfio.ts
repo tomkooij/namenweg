@@ -2,6 +2,7 @@
 import * as pdfjs from 'pdfjs-dist';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import type { Rot } from './types';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -102,4 +103,40 @@ export async function openFile(file: File): Promise<Source> {
 export function release(canvas: HTMLCanvasElement) {
   canvas.width = 0;
   canvas.height = 0;
+}
+
+/** Draai een canvas met de klok mee (90/180/270). */
+export function rotateCanvas(src: HTMLCanvasElement, r: Rot): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  const W = src.width;
+  const H = src.height;
+  c.width = r % 180 ? H : W;
+  c.height = r % 180 ? W : H;
+  const ctx = c.getContext('2d', { willReadFrequently: true })!;
+  if (r === 90) ctx.translate(H, 0);
+  else if (r === 180) ctx.translate(W, H);
+  else if (r === 270) ctx.translate(0, W);
+  ctx.rotate((r * Math.PI) / 180);
+  ctx.drawImage(src, 0, 0);
+  return c;
+}
+
+/**
+ * Bron met extra, door de gebruiker gekozen paginarotatie. Alle code werkt met de gedraaide
+ * weergave; het origineel blijft ongemoeid.
+ */
+export function withRotation(src: Source, rotOf: (index: number) => Rot): Source {
+  return {
+    numPages: src.numPages,
+    sizes: src.sizes,
+    async render(index, dpi, display) {
+      const c = await src.render(index, dpi, display);
+      const r = rotOf(index);
+      if (!r) return c;
+      const rc = rotateCanvas(c, r);
+      release(c);
+      return rc;
+    },
+    destroy: () => src.destroy(),
+  };
 }
