@@ -61,6 +61,8 @@ pagina, en geen namen of de oorspronkelijke bestandsnaam in de metadata (Info en
 - Sjablonen: vaklayout opslaan en op een volgende klas toepassen (alleen posities, geen namen)
 - Vakken tekenen, verplaatsen (ook met pijltjestoetsen), schalen, verwijderen; ongedaan
   maken/opnieuw; Shift+slepen voor een strook over de volle breedte
+- Eén scan van de hele klas splitsen per leerling (vast aantal pagina's, bij elk naamvak of
+  handmatig)
 - Pagina's draaien (vakken draaien mee), inzoomen op de vakken, pagina's als gecontroleerd markeren
 - Snelle detectie in twee fasen: eerst rechtop, daarna op de achtergrond gedraaide pagina's
 - Vakken kopiëren naar alle pagina's / alle documenten
