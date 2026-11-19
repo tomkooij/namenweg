@@ -1943,6 +1943,7 @@ function openHelp(section?: string) {
       el('h3', {}, '💡 Tips'),
       el('ul', {},
         el('li', {}, 'Verwerk een hele klas tegelijk: sleep alle PDF\'s in één keer naar het venster.'),
+        el('li', {}, `Hele stapel in één PDF gescand? Gebruik "✂ Splitsen…" bij het document om per leerling op te delen.`),
         el('li', {}, 'Ook losse scans als JPG of PNG worden ondersteund.'),
         el('li', {}, 'Bestanden te groot? Kies in Instellingen een lagere resolutie of grijswaarden.'),
       ),
