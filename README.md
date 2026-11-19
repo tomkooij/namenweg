@@ -24,7 +24,9 @@ een analyse of gebruiken als voorbeeld, dan moeten die gegevens eruit. NamenWeg 
 - Een strikte **Content-Security-Policy** verbiedt de browser om verbinding te maken met andere
   servers.
 - Na de eerste keer laden werkt de app ook **offline** (service worker).
-- Er wordt niets opgeslagen behalve je instellingen. Sluit je het tabblad, dan is alles weg.
+- In de browser worden alleen bewaard: instellingen, sjablonen (alleen posities van vakken) en de
+  OCR-taalmodellen (openbare data, voor offline gebruik). Nooit scans of namen. Sluit je het
+  tabblad, dan zijn alle geopende documenten weg.
 
 ## Echt verwijderen
 

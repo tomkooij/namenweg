@@ -1668,7 +1668,7 @@ function openHelp(section?: string) {
         el('li', {}, 'Ook de tekstherkenning (Tesseract OCR) draait lokaal in je browser; de herkenningsmodellen worden van deze website zelf geladen, niet van een externe dienst.'),
         el('li', {}, 'Een Content-Security-Policy verbiedt de browser technisch om verbinding te maken met andere servers.'),
         el('li', {}, 'Na de eerste keer laden werkt de app ook offline. Test het gerust: zet je wifi uit en gebruik de app.'),
-        el('li', {}, 'Er wordt niets opgeslagen behalve je instellingen (geen bestanden, geen namen). Sluit je het tabblad, dan is alles weg.'),
+        el('li', {}, 'In de browser worden alleen bewaard: je instellingen, je sjablonen (alleen posities van vakken) en de OCR-taalmodellen (openbare data, voor offline gebruik). Nooit bestanden, scans of namen. Sluit je het tabblad, dan zijn alle geopende documenten weg.'),
       ),
       el('h3', {}, '✂ Echt verwijderen, niet alleen afdekken'),
       el('p', {}, 'Een zwart vlak óp een PDF leggen is onveilig: de oorspronkelijke scan zit er dan nog onder en kan eruit gehaald worden. NamenWeg bouwt daarom elke pagina opnieuw op: de pagina wordt naar pixels omgezet, de pixels van het naamvak worden overschreven, en alleen díé nieuwe afbeelding komt in een gloednieuwe PDF. Er gaan geen originele beeldlagen, tekstlagen, metadata (zoals auteur, scanner of bestandsnaam) mee.'),
