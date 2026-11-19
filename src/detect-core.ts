@@ -137,8 +137,17 @@ export function findLabels(words: OcrWord[], phrases: Phrase[]): Label[] {
     byLine.set(w.line, arr);
   }
   const labels: Label[] = [];
-  for (const line of byLine.values()) {
-    line.sort((a, b) => a.x0 - b.x0);
+  for (const raw of byLine.values()) {
+    raw.sort((a, b) => a.x0 - b.x0);
+    // Label en waarde aan elkaar geplakt ("Naam:Fatima"): splits op de dubbele punt.
+    const line: OcrWord[] = [];
+    for (const w of raw) {
+      const m = /^([^:]{3,}):(.+)$/.exec(w.text);
+      if (m && norm(m[2]).length >= 2) {
+        const cut = w.x0 + ((w.x1 - w.x0) * (m[1].length + 1)) / w.text.length;
+        line.push({ ...w, text: m[1] + ':', x1: cut }, { ...w, text: m[2], x0: cut });
+      } else line.push(w);
+    }
     const n = line.map((w) => norm(w.text));
     let i = 0;
     while (i < line.length) {

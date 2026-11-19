@@ -19,6 +19,25 @@ export type { DetectResult };
  * Maak voorgedrukte, lichtgrijze (gerasterde) labels leesbaar voor de OCR:
  * licht vervagen sluit het raster, daarna het contrast oprekken.
  */
+/** Kopie van het canvas waarin gekleurde inkt (blauwe/rode pen) wit is gemaakt. */
+function dropColoredInk(src: HTMLCanvasElement): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = src.width;
+  c.height = src.height;
+  const ctx = c.getContext('2d', { willReadFrequently: true })!;
+  ctx.drawImage(src, 0, 0);
+  const img = ctx.getImageData(0, 0, c.width, c.height);
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const r = d[i];
+    const g = d[i + 1];
+    const b = d[i + 2];
+    if (b - Math.max(r, g) > 22 || r - Math.max(g, b) > 40 || g - Math.max(r, b) > 40) d[i] = d[i + 1] = d[i + 2] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  return c;
+}
+
 export function enhanceForOcr(src: HTMLCanvasElement, dpi: number): HTMLCanvasElement {
   const c = document.createElement('canvas');
   c.width = src.width;
@@ -108,7 +127,20 @@ export async function detectPage(
     const words = await recognize(enhanced);
     enhanced.width = enhanced.height = 0;
     if (r === 0) words0 = words;
-    const labels = findLabels(words, phrases);
+    let labels = findLabels(words, phrases);
+    // Andere labels gevonden maar geen naamlabel? Dan stoort het handschrift ernaast vaak de
+    // OCR. Tweede ronde zonder gekleurde inkt, alleen om labels te vinden.
+    if (labels.length && !labels.some((l) => l.kind === 'naam')) {
+      const clean = dropColoredInk(c);
+      const enh2 = enhanceForOcr(clean, settings.ocrDpi);
+      clean.width = clean.height = 0;
+      const words2 = await recognize(enh2);
+      enh2.width = enh2.height = 0;
+      const extra = findLabels(words2, phrases).filter(
+        (l) => !labels.some((o) => o.kind === l.kind && Math.abs(o.x0 - l.x0) < 3 * (l.y1 - l.y0) && Math.abs(o.y0 - l.y0) < 2 * (l.y1 - l.y0)),
+      );
+      labels = [...labels, ...extra];
+    }
     const personal = labels.filter((l) => l.kind !== 'stop');
     if (!personal.length) {
       if (r) c.width = c.height = 0;

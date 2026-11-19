@@ -73,6 +73,12 @@ describe('findLabels', () => {
     expect(l[0].kind).toBe('nummer');
   });
 
+  it('herkent een label dat aan de waarde vastgeplakt is ("Naam:Fatima")', () => {
+    const [l] = findLabels(line(1, 100, ['Naam:Fatima', 100]), phrases);
+    expect(l.kind).toBe('naam');
+    expect(l.x1).toBeLessThan(160);
+  });
+
   it('trekt een afgekapt label door tot de volle lengte', () => {
     const [l] = findLabels(line(1, 100, ['kandid', 100]), phrases);
     expect(l.kind).toBe('naam');
