@@ -1648,7 +1648,9 @@ function downloadKey() {
   const names = new Map(lastExport.map((r) => [r.doc, r.fileName]));
   const rows: (string | number)[][] = [['Kandidaat', 'Nummer', 'Origineel bestand', 'Geëxporteerd bestand', "Pagina's"]];
   for (const d of [...list].sort((a, b) => a.num - b.num)) rows.push([docText(d), d.num, d.name, names.get(d) ?? '', d.pages.length]);
-  const stamp = new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-');
+  const n = new Date();
+  const pad = (v: number) => String(v).padStart(2, '0');
+  const stamp = `${n.getFullYear()}-${pad(n.getMonth() + 1)}-${pad(n.getDate())}-${pad(n.getHours())}${pad(n.getMinutes())}`;
   download(new Blob([toCsv(rows)], { type: 'text/csv;charset=utf-8' }), `sleutel-namenweg-${stamp}.csv`);
 }
 
