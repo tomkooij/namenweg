@@ -42,16 +42,33 @@ async function start() {
       cacheMethod: 'write',
       cachePath: 'namenweg-ocr',
     };
-    const made = await Promise.all(
-      Array.from({ length: wanted }, async () => {
-        const w = await createWorker('nld+eng', OEM.LSTM_ONLY, opts);
-        await w.setParameters({
-          tessedit_pageseg_mode: PSM.SPARSE_TEXT,
-          preserve_interword_spaces: '1',
-        });
-        return w;
-      }),
-    );
+    const create = async () => {
+      // Lukt het niet (snel) met de lokale cache (bijv. privévenster), dan zonder cache.
+      let timer = 0;
+      const attempt = createWorker('nld+eng', OEM.LSTM_ONLY, opts);
+      const timeout = new Promise<never>((_, rej) => (timer = window.setTimeout(() => rej(new Error('timeout')), 60_000)));
+      try {
+        return await Promise.race([attempt, timeout]);
+      } catch {
+        attempt.then((w) => w.terminate()).catch(() => {});
+        return createWorker('nld+eng', OEM.LSTM_ONLY, { ...opts, cacheMethod: 'none' });
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    const make = async () => {
+      const w = await create();
+      await w.setParameters({
+        tessedit_pageseg_mode: PSM.SPARSE_TEXT,
+        preserve_interword_spaces: '1',
+      });
+      return w;
+    };
+    // Eerst één worker (vult de lokale cache met de taalmodellen), daarna de rest tegelijk:
+    // gelijktijdig schrijven naar dezelfde cache kan vastlopen.
+    const first = await make();
+    const rest = await Promise.all(Array.from({ length: wanted - 1 }, make));
+    const made = [first, ...rest];
     workers = made;
     idle.push(...made);
     statusCb('');
