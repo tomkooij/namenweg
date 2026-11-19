@@ -43,7 +43,7 @@ bouwt daarom elke pagina opnieuw op:
    tekstlagen of metadata (auteur, scanner, datum, bestandsnaam).
 
 Na de export wordt elk bestand automatisch gecontroleerd: geen tekstlaag, precies één afbeelding per
-pagina, en de oorspronkelijke bestandsnaam komt nergens in het bestand voor.
+pagina, en geen namen of de oorspronkelijke bestandsnaam in de metadata (Info en XMP).
 
 ## Functies
 

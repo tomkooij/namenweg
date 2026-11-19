@@ -1307,7 +1307,8 @@ function forbiddenTokens(d: Doc) {
     .replace(/\.[^.]+$/, '')
     .split(/[\s_\-.,()]+/)
     .map(norm)
-    .filter((t) => t.length >= 4 && !/^\d+$/.test(t) && !['scan', 'toets', 'kandidaat'].includes(t));
+    .filter((t) => t.length >= 4 && !/^\d+$/.test(t) && !['scan', 'toets', 'kandidaat'].includes(t))
+    .concat(namesFor(d));
 }
 
 async function exportAll(list?: Doc[]) {
@@ -1799,7 +1800,7 @@ function openHelp(section?: string) {
       ),
       el('h3', {}, '✂ Echt verwijderen, niet alleen afdekken'),
       el('p', {}, 'Een zwart vlak óp een PDF leggen is onveilig: de oorspronkelijke scan zit er dan nog onder en kan eruit gehaald worden. NamenWeg bouwt daarom elke pagina opnieuw op: de pagina wordt naar pixels omgezet, de pixels van het naamvak worden overschreven, en alleen díé nieuwe afbeelding komt in een gloednieuwe PDF. Er gaan geen originele beeldlagen, tekstlagen, metadata (zoals auteur, scanner of bestandsnaam) mee.'),
-      el('p', {}, 'Na de export controleert de app elk bestand automatisch: geen tekstlaag, één afbeelding per pagina, en de oorspronkelijke bestandsnaam komt nergens in het bestand voor.'),
+      el('p', {}, 'Na de export controleert de app elk bestand automatisch: geen tekstlaag, één afbeelding per pagina, en geen namen of de oorspronkelijke bestandsnaam in de metadata.'),
       el('h3', {}, '🔍 Automatische detectie'),
       el('p', {}, 'De app leest de voorgedrukte tekst op elke pagina en zoekt labels zoals "Naam kandidaat", "Examen no.", "Leerlingnummer" en "Klas". Vanaf het label groeit het vak mee met het handschrift en eventuele invulhokjes. Staat er rechtop niets, dan wordt de pagina gedraaid bekeken (handig voor liggende uitwerkbijlagen).'),
       el('p', {}, `Mist de tekstherkenning een label op één pagina (bijv. "Examen no."), dan vult de app het vak aan op basis van dezelfde kop op andere pagina's. Zulke vakken zijn gemarkeerd als "afgeleid". Ook wordt de naam uit de bestandsnaam (bijv. "jansen piet.pdf") overal op de pagina gezocht.`),

@@ -153,8 +153,8 @@ export interface VerifyResult {
 }
 
 /**
- * Controleer de uitvoer: opnieuw inlezen, geen tekstlaag, precies één afbeelding per pagina,
- * geen metadata met namen, en de oorspronkelijke bestandsnaam komt nergens in de bytes voor.
+ * Controleer de uitvoer: opnieuw inlezen, geen tekstlaag, precies één afbeelding per pagina en
+ * geen namen of de oorspronkelijke bestandsnaam in de metadata.
  */
 export async function verifyOutput(bytes: Uint8Array, forbidden: string[], expectedPages: number): Promise<VerifyResult> {
   const checks: { ok: boolean; msg: string }[] = [];
@@ -172,11 +172,15 @@ export async function verifyOutput(bytes: Uint8Array, forbidden: string[], expec
   }
   checks.push({ ok: textItems === 0, msg: textItems === 0 ? 'Geen tekstlaag' : `${textItems} tekstfragmenten gevonden` });
   checks.push({ ok: badPages === 0, msg: badPages === 0 ? 'Elke pagina is één nieuwe afbeelding' : `${badPages} pagina's met afwijkende opbouw` });
+  // Metadata (Info + XMP) via pdf.js, dus ook als die gecomprimeerd is opgeslagen. In de
+  // beeldgegevens zelf zoeken heeft geen zin (JPEG-bytes kunnen toevallig lijken op tekst).
   const meta = await pdf.getMetadata().catch(() => null);
-  const info = JSON.stringify(meta?.info ?? {}).toLowerCase();
-  const raw = new TextDecoder('latin1').decode(bytes).toLowerCase();
-  const hits = forbidden.filter((f) => f.length >= 4 && (raw.includes(f) || info.includes(f)));
-  checks.push({ ok: hits.length === 0, msg: hits.length === 0 ? 'Bestandsnaam/naam komt niet in het bestand voor' : `Gevonden in bestand: ${hits.join(', ')}` });
+  const info = (JSON.stringify(meta?.info ?? {}) + ' ' + String(meta?.metadata?.getRaw?.() ?? "")).toLowerCase();
+  const hits = forbidden.filter((f) => f.length >= 3 && info.includes(f));
+  checks.push({
+    ok: hits.length === 0,
+    msg: hits.length === 0 ? 'Geen namen of bestandsnaam in de metadata' : `Gevonden in metadata: ${hits.join(', ')}`,
+  });
   await pdf.loadingTask.destroy();
   return { ok: checks.every((c) => c.ok), checks };
 }
