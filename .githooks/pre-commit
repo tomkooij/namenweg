@@ -1,0 +1,23 @@
+#!/bin/sh
+# Blokkeert commits die (delen van) leerlingnamen bevatten. De namen worden afgeleid van de
+# bestandsnamen in de lokale map scans/ (die zelf nooit gecommit wordt), zodat deze hook
+# zelf geen namen bevat.
+[ -d scans ] || exit 0
+tokens=$(ls scans 2>/dev/null | sed 's/\.[^.]*$//' | tr ' _.,()-' '\n\n\n\n\n\n\n' | tr 'A-Z' 'a-z' | awk 'length($0) >= 4' | sort -u)
+[ -n "$tokens" ] || exit 0
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+[ -n "$staged" ] || exit 0
+found=0
+for t in $tokens; do
+  if git diff --cached -U0 --diff-filter=ACM | grep -i "^+" | grep -qi -- "$t"; then
+    echo "pre-commit: een naam uit scans/ komt voor in de wijzigingen. Commit geblokkeerd." >&2
+    found=1
+    break
+  fi
+  if echo "$staged" | grep -qi -- "$t"; then
+    echo "pre-commit: een bestandsnaam bevat een naam uit scans/. Commit geblokkeerd." >&2
+    found=1
+    break
+  fi
+done
+exit $found

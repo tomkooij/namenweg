@@ -11,7 +11,9 @@
     "typecheck": "tsc --noEmit",
     "test:render": "python test/render-pages.py .testdata",
     "test:detect": "tsx test/detect-node.ts .testdata && python test/draw-report.py .testdata",
-    "test:synthetic": "python test/make-synthetic.py .testdata-syn && tsx test/detect-node.ts .testdata-syn && python test/draw-report.py .testdata-syn"
+    "test:synthetic": "python test/make-synthetic.py .testdata-syn && tsx test/detect-node.ts .testdata-syn && python test/draw-report.py .testdata-syn",
+    "test": "vitest run",
+    "prepare": "git config core.hooksPath .githooks || true"
   },
   "keywords": [],
   "author": "",
@@ -30,7 +32,8 @@
     "pngjs": "^7.0.0",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
-    "vite": "^8.3.8"
+    "vite": "^8.3.8",
+    "vitest": "^5.1.1"
   },
   "private": true
 }
