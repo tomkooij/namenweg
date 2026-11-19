@@ -133,6 +133,20 @@ function undo(redo = false) {
 const app = document.getElementById('app')!;
 const fileInput = el('input', { type: 'file', multiple: true, accept: 'application/pdf,.pdf,image/*', hidden: true });
 const docList = el('div', { class: 'doclist' });
+let onlyAttention = false;
+const attentionToggle = el('label', { class: 'check filter', hidden: true }, el('input', { type: 'checkbox', onchange: (e: Event) => {
+  onlyAttention = (e.target as HTMLInputElement).checked;
+  renderDocList();
+} }), el('span', {}, 'Alleen documenten met aandachtspunten'));
+
+/** Heeft dit document iets dat de gebruiker moet bekijken? */
+function needsAttention(d: Doc) {
+  if (d.status === 'fout') return true;
+  if (d.status !== 'klaar') return false;
+  const anyDone = d.pages.some((p) => p.detect === 'klaar');
+  const hasNaam = d.pages.some((p) => p.boxes.some((b) => b.kind === 'naam' || b.text));
+  return (anyDone && !hasNaam) || suspiciousPages(d).length > 0 || d.pages.some((p) => p.detect === 'fout');
+}
 const toolbar = el('div', { class: 'toolbar' });
 const editor = el('div', { class: 'editor', tabindex: '0' });
 const strip = el('div', { class: 'strip' });
@@ -179,6 +193,7 @@ app.append(
         ),
         fileInput,
       ),
+      attentionToggle,
       docList,
       el(
         'div',
@@ -744,9 +759,11 @@ function suspiciousPages(d: Doc): number[] {
 }
 
 function renderDocList() {
+  attentionToggle.hidden = docs.length < 4;
+  const shown = onlyAttention ? docs.filter((d) => needsAttention(d) || d === cur) : docs;
   docList.replaceChildren(
     ...(docs.length
-      ? docs.map((d) =>
+      ? shown.map((d) =>
           el(
             'div',
             {
@@ -1553,7 +1570,7 @@ function showExportDialog(results: ExportResult[]) {
             'li',
             {},
             el('strong', {}, r.fileName),
-            ` (${fmtBytes(r.bytes.length)}) `,
+            ` (${fmtBytes(r.bytes.length)}, ${r.doc.pages.reduce((a, p) => a + p.boxes.length, 0)} vak(ken) weggehaald) `,
             el('button', { class: 'btn small', onclick: () => download(r.bytes, r.fileName, 'application/pdf') }, 'Download'),
             el('div', {}, ...r.verify.checks.map((c) => el('div', { class: c.ok ? 'ok' : 'bad' }, `${c.ok ? '✓' : '✗'} ${c.msg}`))),
           ),
