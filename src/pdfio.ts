@@ -53,8 +53,10 @@ async function openPdf(file: File): Promise<Source> {
       const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
       ctx.fillStyle = '#fff';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
-      // 'print' gebruikt geen requestAnimationFrame: werkt ook als het tabblad op de achtergrond staat.
-      await page.render({ canvas, canvasContext: ctx, viewport: vp, intent: display ? 'display' : 'print', annotationMode: pdfjs.AnnotationMode.DISABLE }).promise;
+      // Altijd 'print': die gebruikt geen requestAnimationFrame en loopt dus ook door als het
+      // tabblad op de achtergrond staat. Voor scans is er geen zichtbaar verschil.
+      void display;
+      await page.render({ canvas, canvasContext: ctx, viewport: vp, intent: 'print', annotationMode: pdfjs.AnnotationMode.DISABLE }).promise;
       page.cleanup();
       return canvas;
     },
@@ -119,6 +121,16 @@ export function rotateCanvas(src: HTMLCanvasElement, r: Rot): HTMLCanvasElement 
   ctx.rotate((r * Math.PI) / 180);
   ctx.drawImage(src, 0, 0);
   return c;
+}
+
+/** Bron met een selectie/volgorde van pagina's uit een andere bron (voor splitsen). */
+export function mapSource(src: Source, map: number[]): Source {
+  return {
+    numPages: map.length,
+    sizes: map.map((i) => src.sizes[i]),
+    render: (index, dpi, display) => src.render(map[index], dpi, display),
+    destroy: () => {},
+  };
 }
 
 /**

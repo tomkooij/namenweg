@@ -1,7 +1,7 @@
 import './styles.css';
 import { zipSync } from 'fflate';
 import { DEFAULT_SETTINGS, type Box, type BoxKind, type PageState, type Rot, type Settings } from './types';
-import { openFile, isSupported, release, withRotation, type Source } from './pdfio';
+import { openFile, isSupported, mapSource, release, withRotation, type Source } from './pdfio';
 import { detectPage, norm } from './detect';
 import { completeFromPeers, InkMask, nameTokensFromFileName, refineWithInk } from './detect-core';
 import { setWorkerCount, defaultWorkerCount, onOcrStatus } from './ocr';
@@ -20,6 +20,21 @@ interface Doc {
   status: 'laden' | 'klaar' | 'fout';
   error?: string;
   exported?: boolean;
+  /** Gedeelde, geopende bron (meerdere documenten na splitsen). */
+  raw?: { src: Source; refs: number };
+  /** Paginanummers in de bron. */
+  map?: number[];
+  /** Gemiddelde bestandsgrootte per pagina van het origineel (voor automatische kwaliteit). */
+  bpp?: number;
+}
+
+function makeView(d: Doc): Source {
+  return withRotation(mapSource(d.raw!.src, d.map!), (i) => d.pages[i]?.userRot ?? 0);
+}
+
+function releaseDoc(d: Doc) {
+  if (d.raw && --d.raw.refs <= 0) d.raw.src.destroy();
+  d.raw = undefined;
 }
 
 interface ExportResult {
@@ -242,7 +257,11 @@ async function addFiles(files: File[]) {
     setStatus(`Inlezen: ${++i}/${added.length}…`);
     setProgress(i - 1, added.length);
     try {
-      d.src = withRotation(await openFile(d.file), (i) => d.pages[i]?.userRot ?? 0);
+      const raw = await openFile(d.file);
+      d.raw = { src: raw, refs: 1 };
+      d.map = Array.from({ length: raw.numPages }, (_, i) => i);
+      d.bpp = d.file.size / Math.max(1, raw.numPages);
+      d.src = makeView(d);
       d.pages = d.src.sizes.map((s, index) => ({ index, wPt: s.w, hPt: s.h, boxes: [], detect: 'nog niet' }));
       d.status = 'klaar';
     } catch (e) {
@@ -276,7 +295,7 @@ async function makeThumbs(d: Doc) {
 function removeDoc(d: Doc) {
   const i = docs.indexOf(d);
   if (i < 0) return;
-  d.src?.destroy();
+  releaseDoc(d);
   docs.splice(i, 1);
   dropFromQueue(d);
   if (cur === d) {
@@ -290,7 +309,7 @@ function removeDoc(d: Doc) {
 function clearAll() {
   if (!docs.length) return;
   if (!confirm('Alle documenten uit het geheugen verwijderen? Niet-geëxporteerd werk gaat verloren.')) return;
-  for (const d of [...docs]) d.src?.destroy();
+  for (const d of [...docs]) releaseDoc(d);
   docs.length = 0;
   detectQueue.length = 0;
   cur = null;
@@ -301,6 +320,102 @@ function clearAll() {
   canvasCache.clear();
   renderAll();
   setStatus('Alles gewist.');
+}
+
+// ───────────────────────── Splitsen ─────────────────────────
+
+/** Deel een document op in meerdere documenten (bijv. één scan van de hele klas). */
+function splitDoc(d: Doc, starts: number[]) {
+  const s = [...new Set(starts.filter((i) => i > 0 && i < d.pages.length))].sort((a, b) => a - b);
+  if (!s.length || !d.raw || !d.map) return;
+  const bounds = [0, ...s, d.pages.length];
+  const used = usedNumbers(d);
+  const parts: Doc[] = [];
+  for (let k = 0; k < bounds.length - 1; k++) {
+    const idx = Array.from({ length: bounds[k + 1] - bounds[k] }, (_, j) => bounds[k] + j);
+    const num = k === 0 ? d.num : uniqueNumber(S.numMin, S.numMax, used);
+    used.add(num);
+    const nd: Doc = {
+      id: uid(),
+      name: `${d.name} (deel ${k + 1})`,
+      file: d.file,
+      src: null,
+      pages: idx.map((i, j) => ({ ...structuredClone(d.pages[i]), index: j, boxes: d.pages[i].boxes.map((b) => ({ ...b, id: uid() })) })),
+      num,
+      status: 'klaar',
+      raw: d.raw,
+      map: idx.map((i) => d.map![i]),
+      bpp: d.bpp,
+    };
+    nd.src = makeView(nd);
+    parts.push(nd);
+  }
+  d.raw.refs += parts.length - 1; // d zelf verdwijnt
+  dropFromQueue(d);
+  const at = docs.indexOf(d);
+  docs.splice(at, 1, ...parts);
+  if (cur === d) {
+    cur = parts[0];
+    curPage = 0;
+    selBox = null;
+  }
+  undoStack.length = redoStack.length = 0;
+  toast(`Opgesplitst in ${parts.length} documenten.`);
+  renderAll();
+}
+
+function openSplit(d: Doc) {
+  if (detectQueue.some((j) => j.doc === d) || (detectRunning && d.pages.some((p) => p.detect === 'bezig'))) {
+    toast('Wacht tot de detectie van dit document klaar is.');
+    return;
+  }
+  const dlg = el('dialog');
+  const nIn = el('input', { type: 'number', min: '1', max: String(d.pages.length), value: String(Math.min(2, d.pages.length)) }) as HTMLInputElement;
+  const naamStarts = () => d.pages.filter((p) => p.boxes.some((b) => b.kind === 'naam' && b.text)).map((p) => p.index);
+  const everyStarts = () => {
+    const n = Math.max(1, Math.floor(Number(nIn.value) || 1));
+    const out: number[] = [];
+    for (let i = n; i < d.pages.length; i += n) out.push(i);
+    return out;
+  };
+  const info1 = el('div', { class: 'note' });
+  const upd = () => {
+    info1.textContent = `→ ${everyStarts().length + 1} documenten`;
+  };
+  nIn.addEventListener('input', upd);
+  upd();
+  const ns = naamStarts().filter((i) => i > 0);
+  const opt = (title: string, desc: HTMLElement | string, btn: HTMLElement) =>
+    el('fieldset', {}, el('legend', {}, title), el('div', { class: 'note', style: 'margin-bottom:8px' }, desc), btn);
+  dlg.append(
+    el('div', { class: 'dhead' }, el('h2', {}, '✂ Document splitsen'), el('button', { class: 'btn icon', onclick: () => dlg.close() }, '✕')),
+    el(
+      'div',
+      { class: 'dbody' },
+      el('p', { class: 'note', style: 'margin-top:0' }, `Heb je de hele stapel in één keer gescand? Deel "${d.name}" (${d.pages.length} pagina's) op in losse documenten per leerling. Elk deel krijgt een eigen kandidaatnummer; gevonden vakken blijven behouden.`),
+      opt(
+        `Vast aantal pagina's per leerling`,
+        el('div', { style: 'display:flex;gap:8px;align-items:center' }, 'Elke', nIn, "pagina's een nieuw document", info1),
+        el('button', { class: 'btn primary', onclick: () => { dlg.close(); splitDoc(d, everyStarts()); } }, 'Splitsen'),
+      ),
+      opt(
+        'Bij elk naamvak',
+        ns.length
+          ? `Nieuw document bij elke pagina met een naamvak (pagina ${naamStarts().map((i) => i + 1).join(', ')}) → ${ns.length + 1} documenten. Let op: heeft elke leerling meerdere bladen mét naamvak, gebruik dan een vast aantal pagina's.`
+          : `Er zijn (nog) geen pagina's met een naamvak gevonden. Laat eerst de detectie lopen.`,
+        el('button', { class: 'btn', disabled: !ns.length, onclick: () => { dlg.close(); splitDoc(d, naamStarts()); } }, 'Splitsen bij naamvakken'),
+      ),
+      opt(
+        'Handmatig',
+        cur === d && curPage > 0 ? `Splits vóór de huidige pagina (${curPage + 1}).` : 'Ga naar de pagina waar het volgende document begint en kies dan deze optie.',
+        el('button', { class: 'btn', disabled: !(cur === d && curPage > 0), onclick: () => { dlg.close(); splitDoc(d, [curPage]); } }, `Splits vóór pagina ${curPage + 1}`),
+      ),
+    ),
+    el('div', { class: 'dfoot' }, el('button', { class: 'btn', onclick: () => dlg.close() }, 'Annuleren')),
+  );
+  document.body.append(dlg);
+  dlg.addEventListener('close', () => dlg.remove());
+  dlg.showModal();
 }
 
 function renumberAll() {
@@ -1168,6 +1283,7 @@ function renderInspector() {
       el('div', { class: 'row', style: 'display:flex;gap:6px;margin-top:8px;flex-wrap:wrap' },
         el('button', { class: 'btn small', onclick: () => { d.num = uniqueNumber(S.numMin, S.numMax, usedNumbers(d)); d.exported = false; renderDocList(); renderInspector(); refreshPreview(); } }, '🎲 Ander nummer'),
         el('button', { class: 'btn small', onclick: () => exportAll([d]) }, '⬇ Alleen dit document'),
+        el('button', { class: 'btn small', onclick: () => openSplit(d), disabled: d.pages.length < 2, title: 'Eén scan met meerdere leerlingen opdelen' }, '✂ Splitsen…'),
       ),
     ),
   );
@@ -1329,7 +1445,7 @@ async function exportAll(list?: Doc[]) {
   for (const d of todo) {
     setStatus(`Exporteren: ${docText(d)}…`);
     try {
-      const bytes = await exportDocument(d.src!, d.pages, docText(d), S, () => setProgress(++done, totalPages), d.file.size / Math.max(1, d.pages.length));
+      const bytes = await exportDocument(d.src!, d.pages, docText(d), S, () => setProgress(++done, totalPages), d.bpp ?? 0);
       setStatus(`Controleren: ${docText(d)}…`);
       const verify = await verifyOutput(bytes, forbiddenTokens(d), d.pages.length);
       results.push({ doc: d, fileName: outName(d, taken), bytes, verify });
