@@ -1,0 +1,19 @@
+# Persoonsgegevens: NOOIT committen
+scans/
+*.pdf
+*.PDF
+*.jpg
+*.jpeg
+*.png
+!public/**/*.png
+!docs/**/*.png
+sleutel*.csv
+*.csv
+
+node_modules/
+dist/
+public/tesseract/
+.vite/
+*.log
+.DS_Store
+public/pdfjs/

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="nl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      Privacy-garantie: deze Content-Security-Policy staat de browser ALLEEN toe om bestanden
+      te laden van deze website zelf. Verbindingen naar andere servers worden door de browser
+      geblokkeerd, dus gescande toetsen kunnen de computer niet verlaten.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' blob: data:; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-src 'none'"
+    />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="description" content="Verwijder namen en leerlingnummers uit gescande toetsen. Alles gebeurt lokaal in je browser." />
+    <meta name="theme-color" content="#1f4fd1" />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <title>NamenWeg</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
