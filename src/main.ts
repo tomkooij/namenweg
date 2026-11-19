@@ -1580,7 +1580,7 @@ function openHelp(section?: string) {
       el('p', {}, 'Na de export controleert de app elk bestand automatisch: geen tekstlaag, één afbeelding per pagina, en de oorspronkelijke bestandsnaam komt nergens in het bestand voor.'),
       el('h3', {}, '🔍 Automatische detectie'),
       el('p', {}, 'De app leest de voorgedrukte tekst op elke pagina en zoekt labels zoals "Naam kandidaat", "Examen no.", "Leerlingnummer" en "Klas". Vanaf het label groeit het vak mee met het handschrift en eventuele invulhokjes. Staat er rechtop niets, dan wordt de pagina gedraaid bekeken (handig voor liggende uitwerkbijlagen).'),
-      el('p', {}, 'Mist de tekstherkenning een label op één pagina (bijv. "Examen no."), dan vult de app het vak aan op basis van dezelfde kop op andere pagina's. Zulke vakken zijn gemarkeerd als "afgeleid". Ook wordt de naam uit de bestandsnaam (bijv. "jansen piet.pdf") overal op de pagina gezocht.'),
+      el('p', {}, `Mist de tekstherkenning een label op één pagina (bijv. "Examen no."), dan vult de app het vak aan op basis van dezelfde kop op andere pagina's. Zulke vakken zijn gemarkeerd als "afgeleid". Ook wordt de naam uit de bestandsnaam (bijv. "jansen piet.pdf") overal op de pagina gezocht.`),
       el('p', {}, 'Handgeschreven namen zónder voorgedrukt label kunnen niet altijd automatisch gevonden worden. Controleer daarom altijd het resultaat met het 🔎 Controle-overzicht of de knop "Voorbeeld".'),
       el('h3', {}, '✏ Handmatig aanpassen'),
       el('ul', {},
