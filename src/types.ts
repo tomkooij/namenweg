@@ -72,7 +72,7 @@ export const DEFAULT_SETTINGS: Settings = {
   fill: 'wit',
   textColor: '#1a3fb0',
   exportDpi: 200,
-  jpegQuality: 0.85,
+  jpegQuality: 0,
   grayscale: false,
   autoDetect: true,
   searchRotated: true,

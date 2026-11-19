@@ -105,12 +105,23 @@ export async function exportDocument(
   text: string,
   s: Settings,
   progress: (done: number, total: number) => void = () => {},
+  targetBytesPerPage = 0,
 ): Promise<Uint8Array> {
   const pdf = await PDFDocument.create({ updateMetadata: false });
   let done = 0;
   for (const p of pages) {
     const canvas = await renderRedacted(src, p, s.exportDpi, text, s);
-    const jpg = await canvasToJpeg(canvas, s.jpegQuality);
+    let jpg: Uint8Array;
+    if (s.jpegQuality > 0) jpg = await canvasToJpeg(canvas, s.jpegQuality);
+    else {
+      // Automatisch: hoogste kwaliteit die ongeveer binnen de grootte van het origineel blijft.
+      const target = targetBytesPerPage ? targetBytesPerPage * 1.25 : Infinity;
+      jpg = await canvasToJpeg(canvas, 0.8);
+      for (const q of [0.7, 0.6, 0.5, 0.42]) {
+        if (jpg.length <= target) break;
+        jpg = await canvasToJpeg(canvas, q);
+      }
+    }
     release(canvas);
     const img = await pdf.embedJpg(jpg);
     const page = pdf.addPage([p.wPt, p.hPt]);

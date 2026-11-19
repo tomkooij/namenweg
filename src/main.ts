@@ -101,6 +101,8 @@ const btnDetectAll = el('button', { class: 'btn', onclick: () => detectAll(true)
 const btnExportAll = el('button', { class: 'btn primary', onclick: () => exportAll() }, '⬇ Exporteer alles');
 const btnKey = el('button', { class: 'btn', onclick: downloadKey, title: 'Sleutelbestand: welke kandidaat is wie (blijft op je computer)' }, '🗝 Sleutel (CSV)');
 const btnRenumber = el('button', { class: 'btn', onclick: renumberAll, title: 'Geef alle documenten nieuwe willekeurige nummers' }, '🎲 Nieuwe nummers');
+const btnOverview = el('button', { class: 'btn', onclick: () => openOverview(), title: "Alle pagina's in één overzicht controleren" }, '🔎 Controle-overzicht');
+const btnTemplates = el('button', { class: 'btn', onclick: () => openTemplates(), title: 'Vaklayout opslaan of toepassen' }, '📐 Sjablonen');
 const btnClear = el('button', { class: 'btn danger', onclick: clearAll }, '🗑 Alles wissen');
 
 app.append(
@@ -136,6 +138,7 @@ app.append(
         'div',
         { class: 'actions' },
         btnExportAll,
+        el('div', { class: 'row' }, btnOverview, btnTemplates),
         el('div', { class: 'row' }, btnDetectAll),
         el('div', { class: 'row' }, btnKey, btnRenumber),
         btnClear,
@@ -450,8 +453,26 @@ function docChips(d: Doc) {
   if (busy) chips.push(el('span', { class: 'chip busy' }, `detecteren ${d.pages.length - busy}/${d.pages.length}`));
   else if (nBoxes) chips.push(el('span', { class: hasNaam ? 'chip ok' : 'chip warn' }, `${nBoxes} vak${nBoxes === 1 ? '' : 'ken'}`));
   if (!busy && anyDone && !hasNaam) chips.push(el('span', { class: 'chip err' }, 'geen naam gevonden'));
+  const odd = suspiciousPages(d);
+  if (!busy && odd.length)
+    chips.push(
+      el('span', { class: 'chip warn', title: "Op deze pagina('s) staat geen vak, terwijl dezelfde pagina bij de meeste andere documenten wél vakken heeft." }, `controleer p. ${odd.map((i) => i + 1).join(', ')}`),
+    );
   if (d.exported) chips.push(el('span', { class: 'chip ok' }, '✓ geëxporteerd'));
   return chips;
+}
+
+/** Pagina's zonder vakken terwijl dezelfde pagina bij ≥ 60% van de andere documenten vakken heeft. */
+function suspiciousPages(d: Doc): number[] {
+  const others = docs.filter((o) => o !== d && o.status === 'klaar');
+  if (others.length < 2) return [];
+  return d.pages
+    .filter((p) => !p.boxes.length && p.detect !== 'bezig')
+    .filter((p) => {
+      const withBoxes = others.filter((o) => o.pages[p.index]?.boxes.length).length;
+      return withBoxes / others.length >= 0.6;
+    })
+    .map((p) => p.index);
 }
 
 function renderDocList() {
@@ -495,6 +516,7 @@ function renderDocList() {
   btnDetectAll.disabled = !any;
   btnKey.disabled = !any;
   btnRenumber.disabled = !any;
+  btnOverview.disabled = !any;
   btnClear.disabled = !docs.length;
   btnExportAll.textContent = docs.length > 1 ? `⬇ Exporteer alles (${docs.length})` : '⬇ Exporteer';
 }
@@ -1093,7 +1115,7 @@ async function exportAll(list?: Doc[]) {
   for (const d of todo) {
     setStatus(`Exporteren: ${docText(d)}…`);
     try {
-      const bytes = await exportDocument(d.src!, d.pages, docText(d), S, () => setProgress(++done, totalPages));
+      const bytes = await exportDocument(d.src!, d.pages, docText(d), S, () => setProgress(++done, totalPages), d.file.size / Math.max(1, d.pages.length));
       setStatus(`Controleren: ${docText(d)}…`);
       const verify = await verifyOutput(bytes, forbiddenTokens(d), d.pages.length);
       results.push({ doc: d, fileName: outName(d, taken), bytes, verify });
@@ -1166,6 +1188,247 @@ function showExportDialog(results: ExportResult[]) {
   dlg.addEventListener('close', () => dlg.remove());
   dlg.showModal();
   if (S.combined && results.length > 1) downloadCombined();
+}
+
+// ───────────────────────── Sjablonen ─────────────────────────
+
+interface Template {
+  name: string;
+  created: string;
+  pages: { index: number; landscape: boolean; boxes: Omit<Box, 'id'>[] }[];
+}
+const TPL_KEY = 'namenweg.templates.v1';
+function loadTemplates(): Template[] {
+  try {
+    return JSON.parse(localStorage.getItem(TPL_KEY) || '[]');
+  } catch {
+    return [];
+  }
+}
+function saveTemplates(t: Template[]) {
+  try {
+    localStorage.setItem(TPL_KEY, JSON.stringify(t));
+  } catch {
+    toast('Opslaan in de browser lukt niet (privévenster?). Gebruik "Exporteren".');
+  }
+}
+
+/** Een sjabloon bevat alleen posities van vakken, nooit beeld of namen. */
+function templateFrom(d: Doc, name: string): Template {
+  return {
+    name,
+    created: new Date().toISOString(),
+    pages: d.pages
+      .filter((p) => p.boxes.length)
+      .map((p) => ({
+        index: p.index,
+        landscape: p.wPt > p.hPt,
+        boxes: p.boxes.map((b) => ({ x: b.x, y: b.y, w: b.w, h: b.h, kind: b.kind, source: 'handmatig' as const, rot: b.rot, text: b.text, label: 'sjabloon' })),
+      })),
+  };
+}
+
+function applyTemplate(t: Template, mode: 'toevoegen' | 'vervangen') {
+  let n = 0;
+  for (const d of docs) {
+    if (d.status !== 'klaar') continue;
+    for (const tp of t.pages) {
+      const p = d.pages[tp.index];
+      if (!p || p.wPt > p.hPt !== tp.landscape) continue;
+      if (mode === 'vervangen') p.boxes = [];
+      for (const b of tp.boxes) {
+        if (p.boxes.some((o) => iou(o, b) > 0.8)) continue;
+        p.boxes.push({ ...b, id: uid(), text: b.text && !p.boxes.some((o) => o.text) });
+        n++;
+      }
+      d.exported = false;
+    }
+  }
+  toast(`Sjabloon "${t.name}" toegepast: ${n} vak(ken) geplaatst.`);
+  renderAll();
+}
+
+function openTemplates() {
+  const dlg = el('dialog');
+  const listEl = el('div');
+  const nameIn = el('input', { type: 'text', placeholder: 'Bijv. Natuurkunde SE3 antwoordblad' }) as HTMLInputElement;
+  const fileIn = el('input', { type: 'file', accept: 'application/json,.json', hidden: true }) as HTMLInputElement;
+  const render = () => {
+    const ts = loadTemplates();
+    listEl.replaceChildren(
+      ...(ts.length
+        ? ts.map((t, i) =>
+            el(
+              'div',
+              { class: 'tpl' },
+              el('div', {}, el('strong', {}, t.name), el('div', { class: 'note' }, `${t.pages.length} pagina('s), ${t.pages.reduce((a, p) => a + p.boxes.length, 0)} vakken · ${new Date(t.created).toLocaleDateString('nl-NL')}`)),
+              el('div', { class: 'tpl-actions' },
+                el('button', { class: 'btn small primary', disabled: !docs.length, onclick: () => { applyTemplate(t, 'toevoegen'); dlg.close(); } }, 'Toepassen'),
+                el('button', { class: 'btn small', disabled: !docs.length, title: 'Bestaande vakken eerst wissen', onclick: () => { if (confirm('Alle bestaande vakken op de betreffende pagina\'s vervangen?')) { applyTemplate(t, 'vervangen'); dlg.close(); } } }, 'Vervangen'),
+                el('button', { class: 'btn small', onclick: () => download(new Blob([JSON.stringify(t, null, 1)], { type: 'application/json' }), `${safeFileName(t.name)}.namenweg.json`) }, 'Exporteren'),
+                el('button', { class: 'btn small danger', onclick: () => { if (confirm(`Sjabloon "${t.name}" verwijderen?`)) { ts.splice(i, 1); saveTemplates(ts); render(); } } }, '🗑'),
+              ),
+            ),
+          )
+        : [el('p', { class: 'note' }, 'Nog geen sjablonen opgeslagen.')]),
+    );
+  };
+  fileIn.addEventListener('change', async () => {
+    const f = fileIn.files?.[0];
+    if (!f) return;
+    try {
+      const t = JSON.parse(await f.text()) as Template;
+      if (!t || !Array.isArray(t.pages)) throw new Error('geen sjabloon');
+      // Alleen bekende velden overnemen
+      const clean: Template = {
+        name: String(t.name || f.name).slice(0, 100),
+        created: String(t.created || new Date().toISOString()),
+        pages: t.pages.map((p) => ({
+          index: Math.max(0, Math.floor(Number(p.index) || 0)),
+          landscape: !!p.landscape,
+          boxes: (p.boxes || []).map((b) => ({
+            x: +b.x, y: +b.y, w: +b.w, h: +b.h,
+            kind: (['naam', 'nummer', 'klas', 'handmatig'] as BoxKind[]).includes(b.kind) ? b.kind : 'handmatig',
+            source: 'handmatig' as const,
+            rot: ([0, 90, 180, 270] as Rot[]).includes(b.rot) ? b.rot : 0,
+            text: !!b.text,
+            label: 'sjabloon',
+          })).filter((b) => [b.x, b.y, b.w, b.h].every((v) => Number.isFinite(v) && v >= 0 && v <= 1)),
+        })),
+      };
+      const ts = loadTemplates();
+      ts.push(clean);
+      saveTemplates(ts);
+      render();
+    } catch {
+      toast('Dit bestand is geen geldig NamenWeg-sjabloon.');
+    }
+    fileIn.value = '';
+  });
+  const saveCur = () => {
+    if (!cur || !cur.pages.some((p) => p.boxes.length)) return toast('Het huidige document heeft geen vakken.');
+    const name = nameIn.value.trim() || `Sjabloon ${new Date().toLocaleDateString('nl-NL')}`;
+    const ts = loadTemplates();
+    ts.push(templateFrom(cur, name));
+    saveTemplates(ts);
+    nameIn.value = '';
+    render();
+  };
+  dlg.append(
+    el('div', { class: 'dhead' }, el('h2', {}, '📐 Sjablonen'), el('button', { class: 'btn icon', onclick: () => dlg.close() }, '✕')),
+    el(
+      'div',
+      { class: 'dbody' },
+      el('p', { class: 'note', style: 'margin-top:0' }, 'Gebruik je vaker hetzelfde antwoordblad? Sla de vakken van een document op als sjabloon en pas ze later in één keer toe op een nieuwe klas. Een sjabloon bevat alleen de posities van de vakken – geen beelden of namen.'),
+      el('fieldset', {},
+        el('legend', {}, 'Huidig document opslaan'),
+        el('div', { class: 'field' }, el('label', {}, 'Naam'), nameIn),
+        el('div', { style: 'display:flex;gap:8px;margin-bottom:10px' },
+          el('button', { class: 'btn primary', onclick: saveCur, disabled: !cur }, '💾 Opslaan als sjabloon'),
+          el('button', { class: 'btn', onclick: () => fileIn.click() }, '📂 Importeren (.json)'),
+          fileIn,
+        ),
+      ),
+      el('h3', { style: 'margin:6px 0' }, 'Opgeslagen sjablonen'),
+      listEl,
+    ),
+    el('div', { class: 'dfoot' }, el('button', { class: 'btn', onclick: () => dlg.close() }, 'Sluiten')),
+  );
+  render();
+  document.body.append(dlg);
+  dlg.addEventListener('close', () => dlg.remove());
+  dlg.showModal();
+}
+
+// ───────────────────────── Controle-overzicht ─────────────────────────
+
+/**
+ * Toont van elke pagina een uitsnede van het eindresultaat: rond de vakken, of (zonder vakken)
+ * de bovenkant van de pagina, waar namen meestal staan. Zo controleer je een hele klas in één keer.
+ */
+function openOverview() {
+  const list = docs.filter((d) => d.status === 'klaar' && d.src);
+  if (!list.length) return;
+  const dlg = el('dialog', { class: 'wide' });
+  const grid = el('div', { class: 'ov-grid' });
+  const onlyEmpty = el('input', { type: 'checkbox' }) as HTMLInputElement;
+  let cancelled = false;
+  const close = () => {
+    cancelled = true;
+    dlg.close();
+  };
+  const cards: { d: Doc; p: PageState; card: HTMLElement }[] = [];
+  for (const d of list)
+    for (const p of d.pages) {
+      const card = el(
+        'button',
+        {
+          class: 'ov-card' + (p.boxes.length ? '' : ' empty'),
+          title: 'Open deze pagina',
+          onclick: () => {
+            cur = d;
+            curPage = p.index;
+            selBox = null;
+            close();
+            renderAll();
+          },
+        },
+        el('div', { class: 'ov-img' }, el('span', { class: 'note' }, 'laden…')),
+        el('div', { class: 'ov-cap' }, el('strong', {}, docText(d)), ` · p. ${p.index + 1}`, p.boxes.length ? ` · ${p.boxes.length} vak${p.boxes.length === 1 ? '' : 'ken'}` : ' · geen vakken (bovenkant getoond)'),
+      );
+      cards.push({ d, p, card });
+      grid.append(card);
+    }
+  onlyEmpty.addEventListener('change', () => {
+    for (const c of cards) c.card.hidden = onlyEmpty.checked && c.p.boxes.length > 0;
+  });
+  dlg.append(
+    el('div', { class: 'dhead' }, el('h2', {}, '🔎 Controle-overzicht'), el('button', { class: 'btn icon', onclick: close }, '✕')),
+    el(
+      'div',
+      { class: 'dbody' },
+      el('p', { class: 'note', style: 'margin-top:0' }, 'Zo ziet de uitvoer eruit. Staat er nog ergens een naam of nummer? Klik op de pagina om hem te openen en een vak te tekenen.'),
+      el('label', { class: 'check' }, onlyEmpty, el('span', {}, "Alleen pagina's zonder vakken tonen")),
+      grid,
+    ),
+    el('div', { class: 'dfoot' }, el('button', { class: 'btn primary', onclick: close }, 'Sluiten')),
+  );
+  document.body.append(dlg);
+  dlg.addEventListener('close', () => {
+    cancelled = true;
+    dlg.remove();
+  });
+  dlg.showModal();
+
+  (async () => {
+    for (const { d, p, card } of cards) {
+      if (cancelled) return;
+      try {
+        const dpi = 70;
+        const c = await d.src!.render(p.index, dpi);
+        applyRedactions(c, p.boxes, docText(d), S);
+        const W = c.width;
+        const H = c.height;
+        let r = { x0: 0, y0: 0, x1: W, y1: H * 0.28 };
+        if (p.boxes.length) {
+          const x0 = Math.min(...p.boxes.map((b) => b.x)) * W;
+          const y0 = Math.min(...p.boxes.map((b) => b.y)) * H;
+          const x1 = Math.max(...p.boxes.map((b) => b.x + b.w)) * W;
+          const y1 = Math.max(...p.boxes.map((b) => b.y + b.h)) * H;
+          const m = 0.06 * Math.max(W, H);
+          r = { x0: Math.max(0, x0 - m), y0: Math.max(0, y0 - m), x1: Math.min(W, x1 + m), y1: Math.min(H, y1 + m) };
+        }
+        const out = document.createElement('canvas');
+        out.width = Math.round(r.x1 - r.x0);
+        out.height = Math.round(r.y1 - r.y0);
+        out.getContext('2d')!.drawImage(c, r.x0, r.y0, out.width, out.height, 0, 0, out.width, out.height);
+        release(c);
+        card.querySelector('.ov-img')!.replaceChildren(el('img', { src: out.toDataURL('image/jpeg', 0.8), alt: '' }));
+      } catch {
+        card.querySelector('.ov-img')!.replaceChildren(el('span', { class: 'note err' }, 'kan niet tonen'));
+      }
+    }
+  })();
 }
 
 function downloadKey() {
@@ -1266,7 +1529,7 @@ function openSettings() {
         el('legend', {}, 'Uitvoer'),
         el('div', { class: 'grid2' },
           select('exportDpi', 'Resolutie', [['100', '100 dpi (klein)'], ['150', '150 dpi'], ['200', '200 dpi (aanbevolen)'], ['300', '300 dpi (groot)']]),
-          select('jpegQuality', 'Beeldkwaliteit', [['0.6', 'Laag (klein bestand)'], ['0.75', 'Gemiddeld'], ['0.85', 'Hoog'], ['0.95', 'Zeer hoog']]),
+          select('jpegQuality', 'Beeldkwaliteit', [['0', 'Automatisch (grootte zoals origineel)'], ['0.6', 'Laag (klein bestand)'], ['0.75', 'Gemiddeld'], ['0.85', 'Hoog'], ['0.95', 'Zeer hoog']]),
         ),
         check('grayscale', 'Grijswaarden (kleinere bestanden)'),
         text('fileNameTemplate', 'Bestandsnaam', '{tekst} = vervangende tekst, {n} = nummer. ".pdf" wordt automatisch toegevoegd.'),

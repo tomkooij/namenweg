@@ -787,3 +787,64 @@ body.dragging::after {
     width: 100px;
   }
 }
+
+dialog.wide {
+  width: min(1200px, calc(100vw - 32px));
+}
+.ov-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+.ov-card {
+  display: grid;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+  cursor: pointer;
+  text-align: left;
+}
+.ov-card:hover {
+  border-color: var(--accent);
+}
+.ov-card.empty {
+  border-style: dashed;
+}
+.ov-img {
+  background: #fff;
+  border-radius: 6px;
+  min-height: 90px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.ov-img img {
+  width: 100%;
+  display: block;
+}
+.ov-cap {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.ov-cap strong {
+  color: var(--text);
+}
+
+.tpl {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+.tpl-actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
