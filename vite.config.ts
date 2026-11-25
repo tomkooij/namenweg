@@ -2,6 +2,16 @@ import { defineConfig, type Plugin } from 'vite';
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
+import { execSync } from 'node:child_process';
+
+function git(cmd: string): string {
+  try {
+    return execSync(`git ${cmd}`, { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+  } catch {
+    return '';
+  }
+}
+const COMMIT = process.env.GITHUB_SHA || git('rev-parse HEAD');
 
 /**
  * Na het bouwen: zet de lijst met ALLE app-bestanden (en een versie) in dist/sw.js, zodat de
@@ -44,6 +54,7 @@ function precacheManifest(): Plugin {
 
 export default defineConfig({
   base: './',
+  define: { __COMMIT__: JSON.stringify(COMMIT) },
   build: {
     target: 'es2022',
     chunkSizeWarningLimit: 2000,

@@ -221,11 +221,22 @@ const btnOverview = el('button', { class: 'btn', onclick: () => openOverview(), 
 const btnTemplates = mi('📐 Sjablonen…', () => openTemplates(), 'Vaklayout opslaan of toepassen');
 const btnClear = mi('🗑 Alles wissen', clearAll, '', 'danger');
 
+function commitLink(): HTMLElement | string {
+  if (!__COMMIT__) return '';
+  return el('a', {
+    class: 'commit',
+    href: `https://github.com/tomkooij/namenweg/commit/${__COMMIT__}`,
+    target: '_blank',
+    rel: 'noopener noreferrer',
+    title: 'Deze versie op GitHub bekijken',
+  }, __COMMIT__.slice(0, 7));
+}
+
 app.append(
   el(
     'header',
     { class: 'top' },
-    el('div', { class: 'brand' }, el('img', { src: './favicon.svg', alt: '' }), 'NamenWeg', el('small', {}, 'toetsen anonimiseren')),
+    el('div', { class: 'brand' }, el('img', { src: './favicon.svg', alt: '' }), 'NamenWeg', commitLink(), el('small', {}, 'toetsen anonimiseren')),
     el('button', { class: 'privacy', onclick: () => openHelp('privacy'), title: 'Hoe wordt mijn privacy beschermd?' }, '🔒 100% lokaal – er wordt niets geüpload'),
     el('div', { class: 'spacer' }),
     el('button', { class: 'btn', onclick: () => openHelp() }, '❓ Help'),

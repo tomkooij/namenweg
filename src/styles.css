@@ -120,6 +120,14 @@ header.top {
   color: var(--muted);
   font-size: 13px;
 }
+.brand .commit {
+  font: 400 11px ui-monospace, Consolas, monospace;
+  color: var(--muted);
+  text-decoration: none;
+}
+.brand .commit:hover {
+  text-decoration: underline;
+}
 .privacy {
   display: inline-flex;
   align-items: center;
