@@ -109,9 +109,12 @@ const ANSWERS = [
   ['4  P = E / t = 3600 / 12 = 300 W', '5  zie grafiek: t = 5 s', '6  η = 0,58'],
 ];
 
-/** Pagina's van één leerling: voorblad met naam en een vervolgblad zonder. */
-async function addStudent(pdf: PDFDocument, s: Student) {
-  for (const c of [page(s, true, ANSWERS[0]), page(s, false, ANSWERS[1])]) {
+const EXTRA = ['7  a = Δv / Δt = 4 m/s²', '8  W = F · s = 120 J', '9  zie tekening'];
+
+/** Pagina's van één leerling: voorblad met naam en vervolgbladen zonder (standaard 2 pagina's). */
+async function addStudent(pdf: PDFDocument, s: Student, pages = 2) {
+  const sheets = [page(s, true, ANSWERS[0]), page(s, false, ANSWERS[1]), page(s, false, EXTRA)].slice(0, pages);
+  for (const c of sheets) {
     const img = await pdf.embedJpg(await canvasJpeg(c));
     const p = pdf.addPage([595.28, 841.89]);
     p.drawImage(img, { x: 0, y: 0, width: 595.28, height: 841.89 });
@@ -130,12 +133,17 @@ export async function makeDemoFiles(): Promise<File[]> {
   return files;
 }
 
-/** Eén PDF met de hele (voorbeeld)klas achter elkaar gescand: 4 leerlingen × 2 pagina's. */
-export async function makeClassDemoFile(): Promise<File> {
+/**
+ * Eén PDF met de hele (voorbeeld)klas achter elkaar gescand: 4 leerlingen × 2 pagina's, of met
+ * `wisselend` 2, 3, 1 en 2 pagina's (niet iedereen levert evenveel bladen in).
+ */
+export async function makeClassDemoFile(wisselend = false): Promise<File> {
   const pdf = await PDFDocument.create();
-  for (const s of [...STUDENTS, { last: 'de Vries', first: 'Sem', nr: '204871', klas: '4B' }]) await addStudent(pdf, s);
+  const lengths = wisselend ? [2, 3, 1, 2] : [2, 2, 2, 2];
+  const klas = [...STUDENTS, { last: 'de Vries', first: 'Sem', nr: '204871', klas: '4B' }];
+  for (let i = 0; i < klas.length; i++) await addStudent(pdf, klas[i], lengths[i]);
   const bytes = await pdf.save();
-  return new File([bytes as BlobPart], 'scan klas 4B natuurkunde.pdf', { type: 'application/pdf' });
+  return new File([bytes as BlobPart], wisselend ? 'scan klas 4C natuurkunde (wisselend).pdf' : 'scan klas 4B natuurkunde.pdf', { type: 'application/pdf' });
 }
 
 /** Gedrukte vragen per blad (verschillend per blad, zonder woorden die op labels lijken). */

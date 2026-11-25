@@ -69,14 +69,18 @@ pagina, en geen namen of de oorspronkelijke bestandsnaam in de metadata (Info en
   Eén leerling met de naam op elk (ander) blad wordt dus niet gesplitst. Hebben leerlingen
   niet allemaal evenveel pagina's (bijv. 4, 6 of 8), dan wordt gesplitst bij elk blad dat
   gelijk is aan pagina 1 (het voorblad); een slecht gelezen voorblad wordt afgeleid uit het
-  blad erna. Bij twijfel stelt de app het splitsen alleen voor (knop bij het document). Terug
-  te draaien via de melding, uit te zetten in Instellingen. Het oogje bij "Dit document" laat
+  blad erna. Is de verdeling ongelijk of twijfelt de app, dan opent het venster
+  "Splitsresultaat" (één rij per kandidaat, klik op ✂ om te splitsen of voeg een rij samen met
+  de vorige); bij een gelijke verdeling niet, maar dan staat er "Bekijken" in de melding en
+  "✂ Splitsing bekijken/aanpassen…" bij het document. Terug te draaien via de melding, uit te
+  zetten in Instellingen. Het oogje bij "Dit document" laat
   zien wat de tekstherkenning per pagina zag en hoe de splitsheuristiek besliste. Handmatig
   splitsen kan ook (vast aantal pagina's, bij elk naamvak of vóór een pagina), net als
   documenten samenvoegen (bijv. een apart gescande uitwerkbijlage)
 - Voorbeelden met verzonnen namen: drie losse toetsen, of een hele klas in één PDF. In dev ook
   `?demo=klas` (moet splitsen), `?demo=bladen` (één leerling met de naam op elk blad: mag niet
-  splitsen) of `?demo=beide`
+  splitsen), `?demo=beide` of `?demo=wisselend` (klas met 2, 3, 1 en 2 pagina's per leerling: het
+  splitsvenster opent)
 - Pagina's draaien (vakken draaien mee), inzoomen op de vakken, pagina's als gecontroleerd markeren
 - Snelle detectie in twee fasen: eerst rechtop, daarna op de achtergrond gedraaide pagina's
 - Vakken kopiëren naar alle pagina's / alle documenten

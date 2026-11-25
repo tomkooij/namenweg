@@ -28,8 +28,6 @@ interface Doc {
   splitChecked?: boolean;
   /** Lijkt een klassenscan, maar niet zeker genoeg: voorgestelde splitspunten. */
   splitSuggest?: number[];
-  splitSuggestHow?: string;
-  splitSuggestLog?: string[];
   /** Waar dit deel vandaan komt en waarom zo gesplitst (voor het analysevenster). */
   splitInfo?: SplitInfo;
 }
@@ -37,6 +35,8 @@ interface Doc {
 interface SplitInfo {
   /** Naam van het oorspronkelijke bestand. */
   from: string;
+  /** Delen uit dezelfde splitsing hebben dezelfde batch (om de splitsing later aan te passen). */
+  batch: string;
   /** Hoe er gesplitst is, bijv. "automatisch (voorblad)" of "handmatig". */
   how: string;
   /** Afwegingen van de splitsheuristiek. */
@@ -338,17 +338,19 @@ function setProgress(done: number, total: number) {
 onOcrStatus((m) => m && setStatus(m));
 
 let toastTimer = 0;
-function toast(msg: string, action?: { label: string; run: () => void }) {
+type ToastAction = { label: string; run: () => void };
+function toast(msg: string, action?: ToastAction | ToastAction[]) {
   document.querySelector('.toast')?.remove();
+  const actions = action ? (Array.isArray(action) ? action : [action]) : [];
   const t = el(
     'div',
     { class: 'toast', role: 'status' },
-    msg,
-    action ? el('button', { class: 'toast-btn', onclick: () => { t.remove(); action.run(); } }, action.label) : null,
+    el('span', {}, msg),
+    ...actions.map((a) => el('button', { class: 'toast-btn', onclick: () => { t.remove(); a.run(); } }, a.label)),
   );
   document.body.append(t);
   clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => t.remove(), action ? 20000 : 3500);
+  toastTimer = window.setTimeout(() => t.remove(), actions.length ? 20000 : 3500);
 }
 
 // ───────────────────────── Bestanden ─────────────────────────
@@ -454,6 +456,7 @@ function splitDoc(d: Doc, starts: number[], quiet = false, how = 'handmatig', lo
   if (!s.length || !d.parts) return [];
   const bounds = [0, ...s, d.pages.length];
   const used = usedNumbers(d);
+  const batch = uid();
   const parts: Doc[] = [];
   for (let k = 0; k < bounds.length - 1; k++) {
     const idx = Array.from({ length: bounds[k + 1] - bounds[k] }, (_, j) => bounds[k] + j);
@@ -468,7 +471,7 @@ function splitDoc(d: Doc, starts: number[], quiet = false, how = 'handmatig', lo
       num,
       status: 'klaar',
       splitChecked: true,
-      splitInfo: { from: d.splitInfo?.from ?? d.name, how, log, part: k + 1, total: bounds.length - 1, first: idx[0] + 1, last: idx[idx.length - 1] + 1 },
+      splitInfo: { from: d.splitInfo?.from ?? d.name, batch, how, log, part: k + 1, total: bounds.length - 1, first: idx[0] + 1, last: idx[idx.length - 1] + 1 },
     };
     attachParts(nd, idx.map((i) => d.parts![i]));
     parts.push(nd);
@@ -517,66 +520,167 @@ function mergeDocs(list: Doc[], name = list.map((d) => d.name).join(' + '), quie
   return nd;
 }
 
-function openSplit(d: Doc) {
-  if (detectQueue.some((j) => j.doc === d) || (detectRunning && d.pages.some((p) => p.detect === 'bezig'))) {
+/** De documenten die samen uit één splitsing komen (of alleen d zelf). */
+function splitGroup(d: Doc): Doc[] {
+  const b = d.splitInfo?.batch;
+  return b ? docs.filter((x) => x.splitInfo?.batch === b) : [d];
+}
+
+/** Splitsing (opnieuw) toepassen op een groep documenten; kandidaatnummers zoveel mogelijk behouden. */
+function applySplitEdit(list: Doc[], starts: number[], how: string, log: string[] = []) {
+  const oldNums = list.map((d) => d.num);
+  const name = list[0].splitInfo?.from ?? list[0].name;
+  const base = list.length > 1 ? mergeDocs(list, name, true) : list[0];
+  if (!base) return;
+  base.splitSuggest = undefined;
+  if (!starts.length) {
+    base.splitInfo = undefined;
+    toast(`Niet gesplitst: "${name}" is één document (${base.pages.length} pagina's).`);
+    renderAll();
+    return;
+  }
+  const parts = splitDoc(base, starts, true, how, log);
+  const keep = oldNums.slice(0, parts.length);
+  const taken = new Set([...docs.filter((x) => !parts.includes(x)).map((x) => x.num), ...keep]);
+  parts.forEach((p, k) => {
+    if (k < keep.length) p.num = keep[k];
+    else if (taken.has(p.num)) p.num = uniqueNumber(S.numMin, S.numMax, taken);
+    taken.add(p.num);
+  });
+  toast(`Opgesplitst in ${parts.length} documenten.`);
+  renderAll();
+}
+
+/**
+ * Venster met het splitsresultaat: alle pagina's van het oorspronkelijke bestand, één rij per
+ * kandidaat. Klik op ✂ tussen twee pagina's om daar te splitsen, of op "samenvoegen met vorige"
+ * om een grens weg te halen. Pas bij "Toepassen" verandert er iets.
+ */
+function openSplitReview(list: Doc[], initial?: number[], onDone?: () => void) {
+  if (list.some((d) => detectQueue.some((j) => j.doc === d) || d.pages.some((p) => p.detect === 'bezig'))) {
     toast('Wacht tot de detectie van dit document klaar is.');
     return;
   }
-  const dlg = el('dialog');
-  const nIn = el('input', { type: 'number', min: '1', max: String(d.pages.length), value: String(Math.min(2, d.pages.length)) }) as HTMLInputElement;
-  const naamStarts = () => d.pages.filter((p) => p.boxes.some((b) => b.kind === 'naam' && b.text)).map((p) => p.index);
-  const everyStarts = () => {
-    const n = Math.max(1, Math.floor(Number(nIn.value) || 1));
-    const out: number[] = [];
-    for (let i = n; i < d.pages.length; i += n) out.push(i);
-    return out;
+  const pages = list.flatMap((d) => d.pages);
+  const n = pages.length;
+  const from = list[0].splitInfo?.from ?? list[0].name;
+  // Begin: huidige grenzen tussen de delen, of een voorstel.
+  const bounds: number[] = [];
+  list.reduce((a, d) => (bounds.push(a), a + d.pages.length), 0);
+  let starts = new Set(initial ?? bounds.slice(1));
+  const naam = (i: number) => pages[i].boxes.some((b) => b.kind === 'naam');
+  const voorblad = (i: number) => i > 0 && (printedSimilarity(pages[0].printed, pages[i].printed) ?? 0) >= SAME_SHEET;
+  const analysis = analyzeClassSplit(pages);
+  const nums = list.map((d) => d.num);
+
+  const dlg = el('dialog', { class: 'wide' });
+  const summary = el('div', { class: 'sr-summary' });
+  const rowsEl = el('div', { class: 'sr-rows' });
+  const nIn = el('input', { type: 'number', min: '1', max: String(n), value: String(Math.max(1, list[0].pages.length)), class: 'sr-n' }) as HTMLInputElement;
+  const setStarts = (xs: number[]) => {
+    starts = new Set(xs.filter((i) => i > 0 && i < n));
+    render();
   };
-  const info1 = el('div', { class: 'note' });
-  const upd = () => {
-    info1.textContent = `→ ${everyStarts().length + 1} documenten`;
+  const toggle = (i: number) => {
+    if (starts.has(i)) starts.delete(i);
+    else starts.add(i);
+    render();
   };
-  nIn.addEventListener('input', upd);
-  upd();
-  const ns = naamStarts().filter((i) => i > 0);
-  // Bij elk blad dat volgens de gedrukte tekst hetzelfde is als pagina 1 (wisselend aantal pagina's).
-  const vb = d.pages.filter((p) => p.index > 0 && (printedSimilarity(d.pages[0].printed, p.printed) ?? 0) >= SAME_SHEET).map((p) => p.index);
-  const opt = (title: string, desc: HTMLElement | string, btn: HTMLElement) =>
-    el('fieldset', {}, el('legend', {}, title), el('div', { class: 'note', style: 'margin-bottom:8px' }, desc), btn);
+
+  function render() {
+    const st = [...starts].sort((a, b) => a - b);
+    const b = [0, ...st, n];
+    const lengths = b.slice(1).map((x, k) => x - b[k]);
+    const uneven = new Set(lengths).size > 1;
+    summary.replaceChildren(
+      el('strong', {}, `${lengths.length} ${lengths.length === 1 ? 'kandidaat' : 'kandidaten'}`),
+      ` · pagina's per kandidaat: ${lengths.join(', ')}`,
+      ...(uneven ? [el('div', { class: 'note warn' }, "Niet elke kandidaat heeft evenveel pagina's. Controleer of de grenzen kloppen: elke rij moet met een voorblad beginnen.")] : []),
+    );
+    rowsEl.replaceChildren(
+      ...lengths.map((len, k) => {
+        const first = b[k];
+        const num = k < nums.length ? nums[k] : null;
+        // Voorblad midden in de rij: daar begint waarschijnlijk een andere leerling.
+        const innerVb = Array.from({ length: len - 1 }, (_, j) => first + 1 + j).filter(voorblad);
+        const warnRow = (k > 0 && !voorblad(first)) || innerVb.length > 0;
+        const thumbs: HTMLElement[] = [];
+        for (let i = first; i < first + len; i++) {
+          if (i > first)
+            thumbs.push(el('button', { class: 'sr-cut', title: `Hier splitsen: pagina ${i + 1} wordt het begin van een nieuwe kandidaat`, 'aria-label': `Splitsen vóór pagina ${i + 1}`, onclick: () => toggle(i) }, '✂'));
+          const p = pages[i];
+          thumbs.push(
+            el(
+              'div',
+              { class: 'sr-page' + (voorblad(i) || i === 0 ? ' vb' : ''), title: `Pagina ${i + 1}${naam(i) ? ' · naamvak' : ''}${voorblad(i) ? ' · zelfde blad als pagina 1' : ''}` },
+              p.thumb ? el('img', { src: p.thumb, alt: `Pagina ${i + 1}` }) : el('div', { class: 'sr-ph' }),
+              el('span', { class: 'n' }, String(i + 1)),
+              naam(i) ? el('span', { class: 'sr-naam' }, 'naam') : null,
+            ),
+          );
+        }
+        return el(
+          'div',
+          { class: 'sr-row' + (warnRow ? ' odd' : '') },
+          el(
+            'div',
+            { class: 'sr-head' },
+            el('strong', {}, num !== null ? fillTemplate(S.template, num) : 'Nieuwe kandidaat'),
+            ` · ${len} p. (pagina ${len === 1 ? first + 1 : `${first + 1}–${first + len}`})`,
+            k > 0 && !voorblad(first) ? el('span', { class: 'note warn' }, ' · begint niet met een voorblad') : null,
+            innerVb.length ? el('span', { class: 'note warn' }, ` · bevat nog een voorblad (p. ${innerVb.map((i) => i + 1).join(', ')})`) : null,
+            k > 0 ? el('button', { class: 'btn small', onclick: () => toggle(first), title: 'Deze rij bij de vorige kandidaat voegen' }, '↥ Samenvoegen met vorige') : null,
+          ),
+          el('div', { class: 'sr-strip' }, ...thumbs),
+        );
+      }),
+    );
+  }
+
+  const vbStarts = pages.map((_, i) => i).filter(voorblad);
+  const naamStarts = pages.map((_, i) => i).filter((i) => i > 0 && naam(i));
+  const every = () => {
+    const k = Math.max(1, Math.floor(Number(nIn.value) || 1));
+    return Array.from({ length: Math.ceil(n / k) - 1 }, (_, j) => (j + 1) * k);
+  };
+  const close = () => dlg.close();
+  const apply = (xs: number[], how: string) => {
+    close();
+    applySplitEdit(list, xs, how, analysis.log);
+  };
   dlg.append(
-    el('div', { class: 'dhead' }, el('h2', {}, '✂ Document splitsen'), el('button', { class: 'btn icon', onclick: () => dlg.close() }, '✕')),
+    el('div', { class: 'dhead' }, el('h2', {}, `✂ Splitsresultaat – ${from}`), el('button', { class: 'btn icon', onclick: close }, '✕')),
     el(
       'div',
       { class: 'dbody' },
-      el('p', { class: 'note', style: 'margin-top:0' }, `Heb je de hele stapel in één keer gescand? Deel "${d.name}" (${d.pages.length} pagina's) op in losse documenten per leerling. Elk deel krijgt een eigen kandidaatnummer; gevonden vakken blijven behouden.`),
-      opt(
-        `Vast aantal pagina's per leerling`,
-        el('div', { style: 'display:flex;gap:8px;align-items:center' }, 'Elke', nIn, "pagina's een nieuw document", info1),
-        el('button', { class: 'btn primary', onclick: () => { dlg.close(); splitDoc(d, everyStarts(), false, `handmatig (elke ${nIn.value} pagina's)`); } }, 'Splitsen'),
+      el('p', { class: 'note', style: 'margin-top:0' }, `${n} pagina's. Elke rij is één kandidaat met een eigen nummer. Klik op ✂ tussen twee pagina's om daar te splitsen. Pagina's met een blauwe rand zijn hetzelfde blad als pagina 1 (een voorblad).`),
+      el(
+        'div',
+        { class: 'sr-tools' },
+        'Opnieuw indelen:',
+        analysis.result ? el('button', { class: 'btn small', onclick: () => setStarts(analysis.result!.starts) }, 'Automatisch voorstel') : null,
+        el('button', { class: 'btn small', disabled: !vbStarts.length, onclick: () => setStarts(vbStarts) }, `Bij elk voorblad (${vbStarts.length + 1})`),
+        el('button', { class: 'btn small', disabled: !naamStarts.length, onclick: () => setStarts(naamStarts) }, `Bij elk naamvak (${naamStarts.length + 1})`),
+        el('span', { class: 'inline' }, el('button', { class: 'btn small', onclick: () => setStarts(every()) }, 'Elke'), nIn, "pagina's"),
       ),
-      opt(
-        'Bij elk voorblad',
-        vb.length
-          ? `Nieuw document bij elke pagina die hetzelfde blad is als pagina 1 (pagina ${vb.map((i) => i + 1).join(', ')}) → ${vb.length + 1} documenten. Werkt ook als niet elke leerling evenveel pagina's heeft.`
-          : `Geen andere pagina's gevonden die hetzelfde blad zijn als pagina 1 (of de detectie heeft nog niet gelopen).`,
-        el('button', { class: 'btn', disabled: !vb.length, onclick: () => { dlg.close(); splitDoc(d, vb, false, 'handmatig (bij elk voorblad)'); } }, 'Splitsen bij voorbladen'),
-      ),
-      opt(
-        'Bij elk naamvak',
-        ns.length
-          ? `Nieuw document bij elke pagina met een naamvak (pagina ${naamStarts().map((i) => i + 1).join(', ')}) → ${ns.length + 1} documenten. Let op: heeft elke leerling meerdere bladen mét naamvak, gebruik dan een vast aantal pagina's.`
-          : `Er zijn (nog) geen pagina's met een naamvak gevonden. Laat eerst de detectie lopen.`,
-        el('button', { class: 'btn', disabled: !ns.length, onclick: () => { dlg.close(); splitDoc(d, naamStarts(), false, 'handmatig (bij elk naamvak)'); } }, 'Splitsen bij naamvakken'),
-      ),
-      opt(
-        'Handmatig',
-        cur === d && curPage > 0 ? `Splits vóór de huidige pagina (${curPage + 1}).` : 'Ga naar de pagina waar het volgende document begint en kies dan deze optie.',
-        el('button', { class: 'btn', disabled: !(cur === d && curPage > 0), onclick: () => { dlg.close(); splitDoc(d, [curPage], false, `handmatig (vóór pagina ${curPage + 1})`); } }, `Splits vóór pagina ${curPage + 1}`),
-      ),
+      summary,
+      rowsEl,
     ),
-    el('div', { class: 'dfoot' }, el('button', { class: 'btn', onclick: () => dlg.close() }, 'Annuleren')),
+    el(
+      'div',
+      { class: 'dfoot' },
+      el('button', { class: 'btn', onclick: () => apply([], 'niet gesplitst'), title: 'Alles één document laten' }, 'Niet splitsen'),
+      el('span', { class: 'spacer' }),
+      el('button', { class: 'btn', onclick: close }, list.length > 1 ? 'Sluiten (zo laten)' : 'Annuleren'),
+      el('button', { class: 'btn primary', onclick: () => apply([...starts].sort((a, b) => a - b), 'aangepast in het splitsvenster') }, 'Toepassen'),
+    ),
   );
+  render();
   document.body.append(dlg);
-  dlg.addEventListener('close', () => dlg.remove());
+  dlg.addEventListener('close', () => {
+    dlg.remove();
+    onDone?.();
+  });
   dlg.showModal();
 }
 
@@ -674,8 +778,10 @@ function pumpDetect() {
           // Eén melding, zodat de knop "Terugdraaien" niet door een waarschuwing verdrongen wordt.
           const split = autoSplitClasses();
           const warn = missingNameWarning();
-          if (split) toast(warn ? `${split.msg} ${warn}` : split.msg, split.action);
-          else if (warn) toast(warn);
+          if (split) {
+            toast(warn ? `${split.msg} ${warn}` : split.msg, split.actions);
+            openReviews(split.review);
+          } else if (warn) toast(warn);
           queueRotationChecks();
         });
       } else if (!mainLeft && detectQueue.every((j) => j.phase === 'gedraaid') && job.phase === 'rechtop' && !detectRunningMain()) {
@@ -838,8 +944,8 @@ async function completeMissing(): Promise<number> {
  * Scan van een hele klas in één PDF? Dan automatisch per leerling opdelen, zodat elke leerling
  * een eigen kandidaatnummer krijgt. Eén keer per document; terug te draaien via de melding.
  */
-function autoSplitClasses(): { msg: string; action?: { label: string; run: () => void } } | null {
-  const splits: { name: string; parts: Doc[]; per: number }[] = [];
+function autoSplitClasses(): { msg: string; actions: ToastAction[]; review: Doc[][] } | null {
+  const splits: { name: string; parts: Doc[]; per: string }[] = [];
   const maybe: Doc[] = [];
   for (const d of [...docs]) {
     if (d.status !== 'klaar' || d.splitChecked) continue;
@@ -851,19 +957,20 @@ function autoSplitClasses(): { msg: string; action?: { label: string; run: () =>
     if (!res.sure) {
       // Twijfel (bijv. weinig gedrukte tekst om te vergelijken): voorstellen, niet zelf doen.
       d.splitSuggest = res.starts;
-      d.splitSuggestHow = `voorgesteld (${res.method === 'ritme' ? 'vast ritme' : 'bij elk voorblad'}), door jou bevestigd`;
-      d.splitSuggestLog = log;
       maybe.push(d);
       continue;
     }
     const name = d.name;
-    const n = d.pages.length;
     const parts = splitDoc(d, res.starts, true, `automatisch (${res.method === 'ritme' ? 'vast ritme' : 'bij elk voorblad'})`, log);
-    if (parts.length) splits.push({ name, parts, per: n / parts.length });
+    if (parts.length) {
+      const ls = parts.map((p) => p.pages.length);
+      const lo = Math.min(...ls);
+      const hi = Math.max(...ls);
+      splits.push({ name, parts, per: lo === hi ? `${lo} pagina${lo === 1 ? '' : "'s"}` : `${lo} tot ${hi} pagina's` });
+    }
   }
   if (maybe.length) renderDocList();
   if (!splits.length && !maybe.length) return null;
-  const pp = (n: number) => `${n} pagina${n === 1 ? '' : "'s"}`;
   const maybeMsg = maybe.length
     ? maybe.length === 1
       ? `"${maybe[0].name}" lijkt ${maybe[0].splitSuggest!.length + 1} toetsen te bevatten, maar dat is niet zeker.`
@@ -871,19 +978,25 @@ function autoSplitClasses(): { msg: string; action?: { label: string; run: () =>
     : '';
   if (!splits.length)
     return {
-      msg: `${maybeMsg} Controleer en kies "Opdelen" (ook bij het document in de lijst).`,
-      action: { label: 'Opdelen', run: () => maybe.forEach(applySuggestedSplit) },
+      msg: `${maybeMsg} Bekijk het voorstel (ook via de knop bij het document in de lijst).`,
+      actions: [],
+      // Twijfel: het splitsvenster gaat vanzelf open met het voorstel.
+      review: maybe.map((d) => [d]),
     };
   const total = splits.reduce((a, s) => a + s.parts.length, 0);
   const msg =
     (splits.length === 1
-      ? `"${splits[0].name}" bevat ${total} toetsen (${pp(splits[0].per)} per leerling) en is opgedeeld; elke toets krijgt een eigen nummer.`
-      : `${splits.length} bestanden met een hele klas zijn opgedeeld in samen ${total} toetsen (${splits.map((s) => `${s.parts.length}× ${pp(s.per)}`).join(', ')}); elke toets krijgt een eigen nummer.`) +
+      ? `"${splits[0].name}" bevat ${total} toetsen (${splits[0].per} per leerling) en is opgedeeld; elke toets krijgt een eigen nummer.`
+      : `${splits.length} bestanden met een hele klas zijn opgedeeld in samen ${total} toetsen (${splits.map((s) => `${s.parts.length}× ${s.per}`).join(', ')}); elke toets krijgt een eigen nummer.`) +
     (maybeMsg ? ` ${maybeMsg} Zie de lijst.` : '');
+  // Ongelijke verdeling (niet elke kandidaat evenveel pagina's) of twijfel: venster vanzelf openen.
+  const uneven = splits.filter((s) => new Set(s.parts.map((p) => p.pages.length)).size > 1).map((s) => s.parts);
   return {
     msg,
-    // Alles in één keer terugdraaien; delen die intussen gewijzigd zijn (bijv. weer gesplitst) overslaan.
-    action: {
+    review: [...uneven, ...maybe.map((d) => [d])],
+    actions: [
+      { label: 'Bekijken', run: () => { const g = splits[0].parts.filter((x) => docs.includes(x)); if (g.length) openSplitReview(g); } },
+    {
       label: 'Terugdraaien',
       run: () => {
         const restored: Doc[] = [];
@@ -903,15 +1016,17 @@ function autoSplitClasses(): { msg: string; action?: { label: string; run: () =>
         );
       },
     },
+    ],
   };
 }
 
-/** Een voorgestelde splitsing (bij twijfel) alsnog uitvoeren. */
-function applySuggestedSplit(d: Doc) {
-  const st = d.splitSuggest;
-  d.splitSuggest = undefined;
-  if (!st || !docs.includes(d)) return;
-  splitDoc(d, st, false, d.splitSuggestHow, d.splitSuggestLog);
+/** Splitsvensters na elkaar openen (bijv. meerdere bestanden met een ongelijke verdeling). */
+function openReviews(groups: Doc[][]) {
+  const g = groups.shift();
+  if (!g) return;
+  const live = g.filter((x) => docs.includes(x));
+  if (!live.length) return openReviews(groups);
+  openSplitReview(live, live.length === 1 ? live[0].splitSuggest : undefined, () => openReviews(groups));
 }
 
 function missingNameWarning(): string | null {
@@ -945,9 +1060,9 @@ function docChips(d: Doc) {
         title: 'Dit bestand lijkt meerdere toetsen te bevatten. Klik om het per leerling op te delen.',
         onclick: (e: Event) => {
           e.stopPropagation();
-          applySuggestedSplit(d);
+          openSplitReview([d], d.splitSuggest);
         },
-      }, `✂ ${d.splitSuggest.length + 1} toetsen? Opdelen`),
+      }, `✂ ${d.splitSuggest.length + 1} toetsen? Bekijken`),
     );
   if (d.exported) chips.push(el('span', { class: 'chip ok' }, '✓ geëxporteerd'));
   return chips;
@@ -1579,7 +1694,7 @@ function renderInspector() {
       el('div', { class: 'note' }, 'Vervangende tekst: ', el('strong', {}, docText(d))),
       more('doc', 'Meer documentacties',
         el('button', { class: 'btn small', onclick: () => exportAll([d]) }, '⬇ Alleen dit document exporteren'),
-        el('button', { class: 'btn small', onclick: () => openSplit(d), disabled: d.pages.length < 2, title: 'Eén scan met meerdere leerlingen opdelen' }, '✂ Splitsen…'),
+        el('button', { class: 'btn small', onclick: () => openSplitReview(splitGroup(d), d.splitSuggest), disabled: splitGroup(d).reduce((a, x) => a + x.pages.length, 0) < 2, title: 'Eén scan met meerdere leerlingen opdelen, of een splitsing bekijken en aanpassen' }, d.splitInfo ? '✂ Splitsing bekijken/aanpassen…' : '✂ Splitsen…'),
         el(
           'button',
           {
@@ -1862,6 +1977,7 @@ function openAnalysis(d: Doc) {
   if (info) {
     splitSection.push(
       el('p', {}, `Deel ${info.part} van ${info.total} uit "${info.from}" (pagina ${info.first}–${info.last} van het origineel), gesplitst: ${info.how}.`),
+      el('button', { class: 'btn small', onclick: () => { close(); openSplitReview(splitGroup(d)); } }, '✂ Splitsing bekijken/aanpassen…'),
     );
   } else if (analysis?.result) {
     const r = analysis.result;
@@ -1872,7 +1988,7 @@ function openAnalysis(d: Doc) {
         `Lijkt ${r.starts.length + 1} toetsen te bevatten (${r.method === 'ritme' ? 'vast aantal pagina\'s per leerling' : 'bij elk voorblad'}), beginnend op pagina ${[0, ...r.starts].map((i) => i + 1).join(', ')}. `,
         r.sure ? 'Zeker genoeg om automatisch te splitsen.' : 'Niet zeker genoeg om dat automatisch te doen.',
       ),
-      el('button', { class: 'btn small', onclick: () => { close(); splitDoc(d, r.starts, false, 'handmatig (vanuit de analyse)', analysis.log); } }, `✂ Opdelen in ${r.starts.length + 1} toetsen`),
+      el('button', { class: 'btn small', onclick: () => { close(); openSplitReview([d], r.starts); } }, `✂ Bekijken: ${r.starts.length + 1} toetsen`),
     );
   } else {
     splitSection.push(el('p', {}, unfinished ? 'De detectie is nog niet klaar voor alle pagina\'s.' : 'Geen klassenscan herkend: dit document wordt als één toets behandeld.'));
@@ -2355,7 +2471,7 @@ function openHelp(section?: string) {
       el('h3', {}, '💡 Tips'),
       el('ul', {},
         el('li', {}, 'Verwerk een hele klas tegelijk: sleep alle PDF\'s in één keer naar het venster.'),
-        el('li', {}, `Hele stapel in één PDF gescand? Staan de naamvakken op een vast ritme (bijv. elke 2e pagina) en zijn dat steeds hetzelfde voorblad, dan deelt de app de scan na de detectie automatisch per leerling op, met voor elke leerling een eigen nummer. Bij twijfel verschijnt bij het document een knop "Opdelen". Lukt dat niet, gebruik dan "✂ Splitsen…" onder "Meer documentacties". Wil je toch één PDF? Kies na het exporteren "Eén samengevoegde PDF".`),
+        el('li', {}, `Hele stapel in één PDF gescand? Staan de naamvakken op een vast ritme (bijv. elke 2e pagina) en zijn dat steeds hetzelfde voorblad, dan deelt de app de scan na de detectie automatisch per leerling op, met voor elke leerling een eigen nummer. Heeft niet elke leerling evenveel pagina's, of twijfelt de app, dan opent het venster "Splitsresultaat": één rij per kandidaat, klik op ✂ tussen twee pagina's om te splitsen of op "Samenvoegen met vorige". Later aanpassen kan via "✂ Splitsing bekijken/aanpassen…" onder "Meer documentacties". Wil je toch één PDF? Kies na het exporteren "Eén samengevoegde PDF".`),
         el('li', {}, 'Ook losse scans als JPG of PNG worden ondersteund.'),
         el('li', {}, 'Bestanden te groot? Kies in ☰ Menu → Instellingen een lagere resolutie of grijswaarden.'),
       ),
@@ -2490,7 +2606,10 @@ if (import.meta.env.DEV) {
   const qs = new URLSearchParams(location.search);
   const demo = qs.get('demo');
   if (qs.get('auto') === '0') S.autoDetect = false;
-  if (demo === 'klas' || demo === 'bladen' || demo === 'beide') {
+  if (demo === 'wisselend') {
+    // hele klas in één PDF met 2, 3, 1 en 2 pagina's per leerling: splitsvenster moet opengaan
+    import('./demo').then(async ({ makeClassDemoFile }) => addFiles([await makeClassDemoFile(true)]));
+  } else if (demo === 'klas' || demo === 'bladen' || demo === 'beide') {
     // klas = hele klas in één PDF (moet splitsen); bladen = één leerling, naam op elk blad (niet splitsen)
     import('./demo').then(async ({ makeClassDemoFile, makeMultiSheetDemoFile }) =>
       addFiles([...(demo !== 'bladen' ? [await makeClassDemoFile()] : []), ...(demo !== 'klas' ? [await makeMultiSheetDemoFile()] : [])]),

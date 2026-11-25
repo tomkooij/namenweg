@@ -265,6 +265,16 @@ describe('classSplitStarts (hele klas in één PDF)', () => {
       const ps = [...student(0, 6), ...student(1, 8), ...student(2, 4), ...student(3, 6)];
       expect(classSplitStarts(ps)).toEqual({ starts: [6, 14, 18], sure: true, method: 'voorblad' });
     });
+    it('wisselend aantal (2, 3, 1, 2) met onleesbare vervolgbladen → niet in een vast ritme persen', () => {
+      // Een ritme van 2 lijkt te passen (p. 3 en 7 zijn voorbladen, p. 5 valt af door te weinig
+      // tekst), maar p. 6 is ook een voorblad, midden in een deel: dus geen vast ritme.
+      const vb = (k: number) => page(true, ocr(voorblad, k));
+      const leeg = () => page(false, []);
+      const ps = [vb(0), leeg(), vb(1), leeg(), leeg(), vb(2), vb(3), leeg()];
+      const r = analyzeClassSplit(ps);
+      expect(r.result).toEqual({ starts: [2, 5, 6], sure: true, method: 'voorblad' });
+      expect(r.log.join('\n')).toMatch(/voorblad midden in een deel/);
+    });
     it('wisselend aantal met een gemist voorblad → hersteld via het 2e blad', () => {
       const student = (k: number, len: number, leesbaar = true) => [page(true, leesbaar ? ocr(voorblad, k) : ['vlek', 'ruis', 'grijs', 'kreukel', 'scan', 'vaag']), ...Array.from({ length: len - 1 }, (_, j) => page(false, ocr(j === 0 ? vervolg : [...vervolg.slice(0, 3), 'blad', `extra${j}`, 'opgave', 'vraag', 'tekst'], j)))];
       const ps = [...student(0, 6), ...student(1, 4), ...student(2, 6, false), ...student(3, 4), ...student(4, 6)];

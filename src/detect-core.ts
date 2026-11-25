@@ -744,6 +744,15 @@ export function analyzeClassSplit(pages: SplitPage[], minParts = 3): SplitAnalys
       log.push(`${head} naamvak op ${pct(cover)}, maar ${cmp} → verschillende bladen, past niet.`);
       continue;
     }
+    // Staat er midden in een deel een voorblad (zelfde blad als pagina 1), dan begint daar een
+    // leerling: het aantal pagina's per leerling is dan niet vast.
+    const startSet = new Set(starts);
+    const inside = [];
+    for (let i = 1; i < n; i++) if (!startSet.has(i) && (sim0(i) ?? 0) >= SAME_SHEET) inside.push(i + 1);
+    if (inside.length) {
+      log.push(`${head} naamvak op ${pct(cover)}, maar voorblad midden in een deel (p. ${inside.join(', ')}) → past niet.`);
+      continue;
+    }
     const sure = compared >= Math.max(2, 0.6 * starts.length) && same / compared >= 0.8;
     log.push(`${head} naamvak op ${pct(cover)}, ${cmp} → past${sure ? ' (zeker)' : ' (niet zeker)'}.`);
     fixed = { starts, sure, method: 'ritme' };
