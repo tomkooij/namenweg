@@ -3,7 +3,7 @@ import { zipSync } from 'fflate';
 import { DEFAULT_SETTINGS, type Box, type BoxKind, type PageState, type Rot, type Settings } from './types';
 import { openFile, isSupported, release, withRotation, type Source } from './pdfio';
 import { detectPage, norm } from './detect';
-import { classSplitStarts, completeFromPeers, InkMask, nameTokensFromFileName, refineWithInk } from './detect-core';
+import { analyzeClassSplit, completeFromPeers, printedSimilarity, SAME_SHEET, InkMask, nameTokensFromFileName, refineWithInk } from './detect-core';
 import { setWorkerCount, defaultWorkerCount, onOcrStatus } from './ocr';
 import { applyRedactions, exportDocument, verifyOutput, combineDocuments, type VerifyResult } from './redact';
 import { el, uid, uniqueNumber, fillTemplate, safeFileName, download, toCsv, fmtBytes } from './util';
@@ -28,6 +28,24 @@ interface Doc {
   splitChecked?: boolean;
   /** Lijkt een klassenscan, maar niet zeker genoeg: voorgestelde splitspunten. */
   splitSuggest?: number[];
+  splitSuggestHow?: string;
+  splitSuggestLog?: string[];
+  /** Waar dit deel vandaan komt en waarom zo gesplitst (voor het analysevenster). */
+  splitInfo?: SplitInfo;
+}
+
+interface SplitInfo {
+  /** Naam van het oorspronkelijke bestand. */
+  from: string;
+  /** Hoe er gesplitst is, bijv. "automatisch (voorblad)" of "handmatig". */
+  how: string;
+  /** Afwegingen van de splitsheuristiek. */
+  log: string[];
+  part: number;
+  total: number;
+  /** Paginanummers (1-based) in het oorspronkelijke bestand. */
+  first: number;
+  last: number;
 }
 
 /** Een geopend bronbestand; kan door meerdere documenten gedeeld worden. */
@@ -426,7 +444,7 @@ function clearAll() {
 // ───────────────────────── Splitsen ─────────────────────────
 
 /** Deel een document op in meerdere documenten (bijv. één scan van de hele klas). */
-function splitDoc(d: Doc, starts: number[], quiet = false): Doc[] {
+function splitDoc(d: Doc, starts: number[], quiet = false, how = 'handmatig', log: string[] = []): Doc[] {
   const s = [...new Set(starts.filter((i) => i > 0 && i < d.pages.length))].sort((a, b) => a - b);
   if (!s.length || !d.parts) return [];
   const bounds = [0, ...s, d.pages.length];
@@ -445,6 +463,7 @@ function splitDoc(d: Doc, starts: number[], quiet = false): Doc[] {
       num,
       status: 'klaar',
       splitChecked: true,
+      splitInfo: { from: d.splitInfo?.from ?? d.name, how, log, part: k + 1, total: bounds.length - 1, first: idx[0] + 1, last: idx[idx.length - 1] + 1 },
     };
     attachParts(nd, idx.map((i) => d.parts![i]));
     parts.push(nd);
@@ -514,6 +533,8 @@ function openSplit(d: Doc) {
   nIn.addEventListener('input', upd);
   upd();
   const ns = naamStarts().filter((i) => i > 0);
+  // Bij elk blad dat volgens de gedrukte tekst hetzelfde is als pagina 1 (wisselend aantal pagina's).
+  const vb = d.pages.filter((p) => p.index > 0 && (printedSimilarity(d.pages[0].printed, p.printed) ?? 0) >= SAME_SHEET).map((p) => p.index);
   const opt = (title: string, desc: HTMLElement | string, btn: HTMLElement) =>
     el('fieldset', {}, el('legend', {}, title), el('div', { class: 'note', style: 'margin-bottom:8px' }, desc), btn);
   dlg.append(
@@ -525,19 +546,26 @@ function openSplit(d: Doc) {
       opt(
         `Vast aantal pagina's per leerling`,
         el('div', { style: 'display:flex;gap:8px;align-items:center' }, 'Elke', nIn, "pagina's een nieuw document", info1),
-        el('button', { class: 'btn primary', onclick: () => { dlg.close(); splitDoc(d, everyStarts()); } }, 'Splitsen'),
+        el('button', { class: 'btn primary', onclick: () => { dlg.close(); splitDoc(d, everyStarts(), false, `handmatig (elke ${nIn.value} pagina's)`); } }, 'Splitsen'),
+      ),
+      opt(
+        'Bij elk voorblad',
+        vb.length
+          ? `Nieuw document bij elke pagina die hetzelfde blad is als pagina 1 (pagina ${vb.map((i) => i + 1).join(', ')}) → ${vb.length + 1} documenten. Werkt ook als niet elke leerling evenveel pagina's heeft.`
+          : `Geen andere pagina's gevonden die hetzelfde blad zijn als pagina 1 (of de detectie heeft nog niet gelopen).`,
+        el('button', { class: 'btn', disabled: !vb.length, onclick: () => { dlg.close(); splitDoc(d, vb, false, 'handmatig (bij elk voorblad)'); } }, 'Splitsen bij voorbladen'),
       ),
       opt(
         'Bij elk naamvak',
         ns.length
           ? `Nieuw document bij elke pagina met een naamvak (pagina ${naamStarts().map((i) => i + 1).join(', ')}) → ${ns.length + 1} documenten. Let op: heeft elke leerling meerdere bladen mét naamvak, gebruik dan een vast aantal pagina's.`
           : `Er zijn (nog) geen pagina's met een naamvak gevonden. Laat eerst de detectie lopen.`,
-        el('button', { class: 'btn', disabled: !ns.length, onclick: () => { dlg.close(); splitDoc(d, naamStarts()); } }, 'Splitsen bij naamvakken'),
+        el('button', { class: 'btn', disabled: !ns.length, onclick: () => { dlg.close(); splitDoc(d, naamStarts(), false, 'handmatig (bij elk naamvak)'); } }, 'Splitsen bij naamvakken'),
       ),
       opt(
         'Handmatig',
         cur === d && curPage > 0 ? `Splits vóór de huidige pagina (${curPage + 1}).` : 'Ga naar de pagina waar het volgende document begint en kies dan deze optie.',
-        el('button', { class: 'btn', disabled: !(cur === d && curPage > 0), onclick: () => { dlg.close(); splitDoc(d, [curPage]); } }, `Splits vóór pagina ${curPage + 1}`),
+        el('button', { class: 'btn', disabled: !(cur === d && curPage > 0), onclick: () => { dlg.close(); splitDoc(d, [curPage], false, `handmatig (vóór pagina ${curPage + 1})`); } }, `Splits vóór pagina ${curPage + 1}`),
       ),
     ),
     el('div', { class: 'dfoot' }, el('button', { class: 'btn', onclick: () => dlg.close() }, 'Annuleren')),
@@ -813,17 +841,19 @@ function autoSplitClasses(): { msg: string; action?: { label: string; run: () =>
     if (d.pages.some((p) => p.detect === 'bezig' || p.detect === 'nog niet')) continue;
     d.splitChecked = true;
     if (!S.autoSplit) continue;
-    const res = classSplitStarts(d.pages);
+    const { result: res, log } = analyzeClassSplit(d.pages);
     if (!res) continue;
     if (!res.sure) {
       // Twijfel (bijv. weinig gedrukte tekst om te vergelijken): voorstellen, niet zelf doen.
       d.splitSuggest = res.starts;
+      d.splitSuggestHow = `voorgesteld (${res.method === 'ritme' ? 'vast ritme' : 'bij elk voorblad'}), door jou bevestigd`;
+      d.splitSuggestLog = log;
       maybe.push(d);
       continue;
     }
     const name = d.name;
     const n = d.pages.length;
-    const parts = splitDoc(d, res.starts, true);
+    const parts = splitDoc(d, res.starts, true, `automatisch (${res.method === 'ritme' ? 'vast ritme' : 'bij elk voorblad'})`, log);
     if (parts.length) splits.push({ name, parts, per: n / parts.length });
   }
   if (maybe.length) renderDocList();
@@ -876,7 +906,7 @@ function applySuggestedSplit(d: Doc) {
   const st = d.splitSuggest;
   d.splitSuggest = undefined;
   if (!st || !docs.includes(d)) return;
-  splitDoc(d, st);
+  splitDoc(d, st, false, d.splitSuggestHow, d.splitSuggestLog);
 }
 
 function missingNameWarning(): string | null {
@@ -1533,7 +1563,7 @@ function renderInspector() {
     el(
       'div',
       { class: 'section' },
-      el('h3', {}, 'Dit document'),
+      el('h3', { class: 'with-eye' }, 'Dit document', el('button', { class: 'eye', title: 'Analyse: wat de tekstherkenning zag en hoe er gesplitst is', 'aria-label': 'Analyse bekijken', onclick: () => openAnalysis(d) }, '👁')),
       el(
         'div',
         { class: 'field' },
@@ -1810,6 +1840,90 @@ function showExportDialog(results: ExportResult[]) {
   dlg.addEventListener('close', () => dlg.remove());
   dlg.showModal();
   if (S.combined && results.length > 1) downloadCombined();
+}
+
+// ───────────────────────── Analyse (oogje) ─────────────────────────
+
+/** Laat zien wat de tekstherkenning per pagina zag en hoe de splitsheuristiek besliste. */
+function openAnalysis(d: Doc) {
+  const dlg = el('dialog', { class: 'wide' });
+  const close = () => dlg.close();
+  const info = d.splitInfo;
+  const analysis = info ? null : analyzeClassSplit(d.pages);
+  const starts = new Set(analysis?.result?.starts ?? []);
+  const unfinished = d.pages.some((p) => p.detect === 'bezig' || p.detect === 'nog niet');
+
+  const splitSection: HTMLElement[] = [];
+  if (info) {
+    splitSection.push(
+      el('p', {}, `Deel ${info.part} van ${info.total} uit "${info.from}" (pagina ${info.first}–${info.last} van het origineel), gesplitst: ${info.how}.`),
+    );
+  } else if (analysis?.result) {
+    const r = analysis.result;
+    splitSection.push(
+      el(
+        'p',
+        {},
+        `Lijkt ${r.starts.length + 1} toetsen te bevatten (${r.method === 'ritme' ? 'vast aantal pagina\'s per leerling' : 'bij elk voorblad'}), beginnend op pagina ${[0, ...r.starts].map((i) => i + 1).join(', ')}. `,
+        r.sure ? 'Zeker genoeg om automatisch te splitsen.' : 'Niet zeker genoeg om dat automatisch te doen.',
+      ),
+      el('button', { class: 'btn small', onclick: () => { close(); splitDoc(d, r.starts, false, 'handmatig (vanuit de analyse)', analysis.log); } }, `✂ Opdelen in ${r.starts.length + 1} toetsen`),
+    );
+  } else {
+    splitSection.push(el('p', {}, unfinished ? 'De detectie is nog niet klaar voor alle pagina\'s.' : 'Geen klassenscan herkend: dit document wordt als één toets behandeld.'));
+  }
+  const log = info?.log ?? analysis?.log ?? [];
+  if (log.length) splitSection.push(el('details', { class: 'more' }, el('summary', {}, 'Afwegingen van de splitsheuristiek'), el('ol', { class: 'an-log' }, ...log.map((l) => el('li', {}, l)))));
+
+  const fmt = (x: number | null) => (x === null ? '–' : `${Math.round(x * 100)}%`);
+  const rows = d.pages.map((p) => {
+    const naam = p.boxes.some((b) => b.kind === 'naam');
+    const sim = p.index === 0 ? null : printedSimilarity(d.pages[0].printed, p.printed);
+    const role = p.index === 0 ? 'begin' : starts.has(p.index) ? 'begin' : '';
+    const tr = el(
+      'tr',
+      { class: (role ? 'start ' : '') + 'clickable', title: 'Open deze pagina', onclick: () => { cur = d; curPage = p.index; selBox = null; close(); renderAll(); } },
+      el('td', {}, String(p.index + 1)),
+      el('td', {}, naam ? '✓' : ''),
+      el('td', {}, p.boxes.map((b) => KIND_LABEL[b.kind]).join(', ')),
+      el('td', { title: p.printed?.join(' ') ?? '' }, p.printed ? String(p.printed.length) : '–'),
+      el('td', { class: sim !== null && sim >= SAME_SHEET ? 'hi' : '' }, p.index === 0 ? '(zelf)' : fmt(sim)),
+      el('td', {}, role ? '▶ nieuwe leerling' : ''),
+      el('td', { class: 'an-note' }, p.detect === 'nog niet' ? 'nog niet gedetecteerd' : p.detect === 'bezig' ? 'bezig…' : (p.detectNote ?? '')),
+    );
+    return tr;
+  });
+
+  dlg.append(
+    el('div', { class: 'dhead' }, el('h2', {}, `👁 Analyse – ${docText(d)}`), el('button', { class: 'btn icon', onclick: close }, '✕')),
+    el(
+      'div',
+      { class: 'dbody' },
+      el('p', { class: 'note', style: 'margin-top:0' }, `${d.name} · ${d.pages.length} pagina's. Alles hieronder blijft op je computer.`),
+      el('h3', {}, 'Splitsen'),
+      ...splitSection,
+      el('h3', {}, 'Per pagina'),
+      el(
+        'p',
+        { class: 'note' },
+        `"Gedrukte woorden" = goed leesbare woorden (wijs aan voor de lijst). "Gelijk aan p. 1" = hoeveel daarvan overeenkomt met pagina 1 van dit document; vanaf ${Math.round(SAME_SHEET * 100)}% geldt het als hetzelfde blad (een voorblad).`,
+      ),
+      el(
+        'div',
+        { class: 'an-wrap' },
+        el(
+          'table',
+          { class: 'an-table' },
+          el('thead', {}, el('tr', {}, ...['Pag.', 'Naamvak', 'Vakken', 'Gedrukte woorden', 'Gelijk aan p. 1', 'Splitsen', 'Tekstherkenning'].map((h) => el('th', {}, h)))),
+          el('tbody', {}, ...rows),
+        ),
+      ),
+    ),
+    el('div', { class: 'dfoot' }, el('button', { class: 'btn primary', onclick: close }, 'Sluiten')),
+  );
+  document.body.append(dlg);
+  dlg.addEventListener('close', () => dlg.remove());
+  dlg.showModal();
 }
 
 // ───────────────────────── Sjablonen ─────────────────────────

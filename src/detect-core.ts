@@ -665,46 +665,151 @@ export function findNameWords(words: OcrWord[], names: string[]): { rect: PxRect
   return out;
 }
 
-/**
- * Herken een scan van een hele klas in één bestand: naamvakken op een vast ritme (bijv. op
- * pagina 1, 3, 5, … bij twee bladen per leerling). Geeft de pagina's terug waar een nieuwe
- * leerling begint (zonder 0), of null als het er niet duidelijk op lijkt.
- *
- * Voorwaarden: pagina 1 heeft een naamvak, alle naamvakken vallen op een veelvoud van de
- * periode, het aantal pagina's is een veelvoud van de periode, er zijn minstens `minParts`
- * leerlingen en bij minstens 60% daarvan is het naamvak ook echt gevonden (een gemist naamvak
- * wordt zo opgevangen).
- */
-export function classSplitStarts(
-  pages: { boxes: { kind: BoxKind }[]; printed?: string[] }[],
-  minParts = 3,
-): { starts: number[]; sure: boolean } | null {
-  const named = pages.map((p, i) => (p.boxes.some((b) => b.kind === 'naam') ? i : -1)).filter((i) => i >= 0);
-  if (named[0] !== 0 || named.length < 2) return null;
-  let period = Infinity;
-  for (let i = 1; i < named.length; i++) period = Math.min(period, named[i] - named[i - 1]);
-  if (!named.every((s) => s % period === 0) || pages.length % period !== 0) return null;
-  const parts = pages.length / period;
-  if (parts < minParts || named.length / parts < 0.6) return null;
-  const starts = Array.from({ length: parts - 1 }, (_, k) => (k + 1) * period);
+export interface SplitPage {
+  boxes: { kind: BoxKind }[];
+  printed?: string[];
+}
 
-  // Zijn de beginpagina's echt hetzelfde voorblad (klas), of verschillende bladen van één
-  // leerling met overal de naam erop? Vergelijk de gedrukte tekst met die van pagina 1.
-  let same = 0;
-  let compared = 0;
-  for (const s of starts) {
-    const sim = printedSimilarity(pages[0].printed, pages[s].printed);
-    if (sim === null) continue;
-    compared++;
-    // Hetzelfde voorblad scoort in de praktijk ~0,9–1; verschillende bladen met dezelfde kop
-    // (naam, klas, titel) blijven daar ruim onder.
-    if (sim >= SAME_SHEET) same++;
+export interface SplitResult {
+  /** Pagina's (0-based) waar een nieuwe leerling begint, zonder 0. */
+  starts: number[];
+  /** Zeker genoeg om automatisch te splitsen; anders alleen voorstellen. */
+  sure: boolean;
+  /** ritme = vast aantal pagina's per leerling; voorblad = bij elk blad gelijk aan pagina 1. */
+  method: 'ritme' | 'voorblad';
+}
+
+/** Uitkomst plus een leesbaar logboek van de afwegingen (voor het analysevenster). */
+export interface SplitAnalysis {
+  result: SplitResult | null;
+  log: string[];
+}
+
+const pct = (x: number) => `${Math.round(x * 100)}%`;
+
+/**
+ * Herken een scan van een hele klas in één bestand en bepaal waar elke leerling begint.
+ *
+ * 1. Ritme: elk vast aantal pagina's per leerling (1, 2, 3, …) wordt geprobeerd, de kleinste
+ *    eerst. Een ritme past als pagina 1 een naamvak heeft, bij ≥ 60% van de leerlingen het
+ *    naamvak op hun eerste pagina gevonden is (een gemist naamvak wordt zo opgevangen) en de
+ *    gedrukte tekst niet laat zien dat de beginpagina's verschillende bladen zijn. Naamvakken
+ *    op andere pagina's (bijv. een antwoordblad met naam) mogen.
+ * 2. Voorblad: hebben leerlingen niet allemaal evenveel pagina's (bijv. 4, 6 of 8), dan begint
+ *    een leerling bij elke pagina die volgens de gedrukte tekst hetzelfde blad is als pagina 1.
+ *
+ * Alleen als de gedrukte tekst het bevestigt is de uitkomst `sure`; anders wordt splitsen
+ * alleen voorgesteld.
+ */
+export function analyzeClassSplit(pages: SplitPage[], minParts = 3): SplitAnalysis {
+  const log: string[] = [];
+  const n = pages.length;
+  const named = (i: number) => pages[i].boxes.some((b) => b.kind === 'naam');
+  const sim0 = (i: number) => printedSimilarity(pages[0].printed, pages[i].printed);
+  if (n < minParts) {
+    log.push(`Maar ${n} pagina('s): te weinig voor ${minParts} of meer leerlingen.`);
+    return { result: null, log };
   }
-  // Duidelijk verschillende bladen: niet splitsen.
-  if (compared >= 2 && same / compared < 0.5) return null;
-  // Te weinig te vergelijken of twijfel: wel voorstellen, niet zelf doen.
-  const sure = compared >= Math.max(2, 0.6 * starts.length) && same / compared >= 0.8;
-  return { starts, sure };
+  if (!named(0)) {
+    log.push('Pagina 1 heeft geen naamvak: niet als klassenscan behandeld.');
+    return { result: null, log };
+  }
+
+  // 1. Vast ritme
+  let fixed: SplitResult | null = null;
+  for (let period = 1; n / period >= minParts; period++) {
+    if (n % period) continue;
+    const parts = n / period;
+    const starts = Array.from({ length: parts - 1 }, (_, k) => (k + 1) * period);
+    const cover = (1 + starts.filter(named).length) / parts;
+    const head = `${period} p. per leerling (${parts} leerlingen):`;
+    if (cover < 0.6) {
+      log.push(`${head} naamvak op ${pct(cover)} van de beginpagina's → past niet.`);
+      continue;
+    }
+    // Zijn de beginpagina's echt hetzelfde voorblad (klas), of verschillende bladen van één
+    // leerling met overal de naam erop? Vergelijk de gedrukte tekst met die van pagina 1.
+    let same = 0;
+    let compared = 0;
+    for (const st of starts) {
+      const sim = sim0(st);
+      if (sim === null) continue;
+      compared++;
+      // Hetzelfde voorblad scoort in de praktijk ~0,9–1; verschillende bladen met dezelfde kop
+      // (naam, klas, titel) blijven daar ruim onder.
+      if (sim >= SAME_SHEET) same++;
+    }
+    const cmp = compared ? `${same} van ${compared} vergeleken beginpagina's gelijk aan pagina 1` : 'gedrukte tekst niet te vergelijken';
+    if (compared >= 2 && same / compared < 0.5) {
+      log.push(`${head} naamvak op ${pct(cover)}, maar ${cmp} → verschillende bladen, past niet.`);
+      continue;
+    }
+    const sure = compared >= Math.max(2, 0.6 * starts.length) && same / compared >= 0.8;
+    log.push(`${head} naamvak op ${pct(cover)}, ${cmp} → past${sure ? ' (zeker)' : ' (niet zeker)'}.`);
+    fixed = { starts, sure, method: 'ritme' };
+    break;
+  }
+  const done = (result: SplitResult | null): SplitAnalysis => {
+    if (!result) log.push('Conclusie: geen klassenscan herkend, niet gesplitst.');
+    else
+      log.push(
+        `Conclusie: ${result.starts.length + 1} leerlingen via ${result.method === 'ritme' ? 'vast ritme' : 'voorblad'}; ${result.sure ? 'automatisch splitsen' : 'alleen voorstellen'}.`,
+      );
+    return { result, log };
+  };
+  if (fixed?.sure) return done(fixed);
+
+  // 2. Wisselend aantal pagina's: elke pagina die hetzelfde blad is als pagina 1.
+  let byCover: SplitResult | null = null;
+  if ((pages[0].printed?.length ?? 0) < MIN_PRINTED) {
+    log.push('Voorblad-methode: te weinig gedrukte tekst op pagina 1 om te vergelijken.');
+  } else {
+    const v = [0];
+    for (let i = 1; i < n; i++) if ((sim0(i) ?? 0) >= SAME_SHEET) v.push(i);
+    // Gemist voorblad herstellen: staat midden in een deel weer het 2e blad van leerling 1,
+    // dan is de pagina ervoor waarschijnlijk een (slecht gelezen) voorblad.
+    const repaired: number[] = [];
+    if (v.length >= 2 && v[1] > 1) {
+      for (let i = 2; i < n; i++) {
+        if (v.includes(i) || v.includes(i - 1) || !named(i - 1)) continue;
+        const prevStart = Math.max(...v.filter((st) => st < i));
+        if (i - 1 - prevStart < 2) continue; // vlak na een voorblad: gewoon blad 2 van die leerling
+        if ((printedSimilarity(pages[1].printed, pages[i].printed) ?? 0) >= SAME_SHEET) repaired.push(i - 1);
+      }
+      v.push(...repaired);
+      v.sort((a, b) => a - b);
+    }
+    if (v.length < minParts) {
+      log.push(`Voorblad-methode: maar ${v.length} pagina('s) gelijk aan pagina 1 → geen klassenscan.`);
+    } else {
+      const lengths = v.map((st, k) => (v[k + 1] ?? n) - st);
+      const namedShare = v.filter(named).length / v.length;
+      const sorted = [...lengths].sort((a, b) => a - b);
+      const median = sorted[Math.floor(sorted.length / 2)];
+      // Veel langer dan gewoonlijk: misschien is daar een voorblad gemist (twee leerlingen in één deel).
+      const long = lengths.filter((l) => l >= 1.8 * median).length;
+      const head =
+        `Voorblad-methode: ${v.length} beginpagina's (p. ${v.map((i) => i + 1).join(', ')}), lengtes ${lengths.join(', ')}` +
+        (repaired.length ? `; voorblad op p. ${repaired.map((i) => i + 1).join(', ')} niet goed gelezen, afgeleid uit het blad erna` : '');
+      if (namedShare < 0.6) {
+        log.push(`${head}; maar naamvak op slechts ${pct(namedShare)} daarvan → past niet.`);
+      } else {
+        const sure = namedShare >= 0.8 && !long;
+        log.push(
+          `${head}; naamvak op ${pct(namedShare)}` +
+            (long ? `; ${long} deel/delen opvallend lang (misschien een gemist voorblad)` : '') +
+            ` → past${sure ? ' (zeker)' : ' (niet zeker)'}.`,
+        );
+        byCover = { starts: v.slice(1), sure, method: 'voorblad' };
+      }
+    }
+  }
+  return done(byCover?.sure ? byCover : (fixed ?? byCover));
+}
+
+/** Kortweg: waar beginnen de leerlingen (of null). Zie analyzeClassSplit. */
+export function classSplitStarts(pages: SplitPage[], minParts = 3): SplitResult | null {
+  return analyzeClassSplit(pages, minParts).result;
 }
 
 /** Vanaf deze overlap (0..1) geldt een pagina als hetzelfde blad. */

@@ -1135,3 +1135,70 @@ details.fold[open] > summary {
 .chip.act:hover {
   filter: brightness(0.95);
 }
+
+/* Analyse (oogje) */
+h3.with-eye {
+  display: flex;
+  align-items: center;
+}
+.eye {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  padding: 0 2px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.35;
+  filter: grayscale(1);
+}
+.eye:hover,
+.eye:focus-visible {
+  opacity: 1;
+  filter: none;
+}
+.an-log {
+  margin: 6px 0 0;
+  padding-left: 20px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.an-log li {
+  margin: 3px 0;
+}
+.an-wrap {
+  overflow-x: auto;
+}
+.an-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.an-table th,
+.an-table td {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.an-table th {
+  color: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.an-table tr.clickable {
+  cursor: pointer;
+}
+.an-table tr.clickable:hover td {
+  background: var(--panel-2);
+}
+.an-table tr.start td {
+  border-top: 2px solid var(--accent);
+}
+.an-table td.hi {
+  color: var(--ok);
+  font-weight: 600;
+}
+.an-table td.an-note {
+  color: var(--muted);
+}

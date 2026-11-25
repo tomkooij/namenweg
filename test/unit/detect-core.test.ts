@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  analyzeClassSplit,
   classSplitStarts,
   printedSimilarity,
   printedWords,
@@ -215,6 +216,9 @@ describe('classSplitStarts (hele klas in één PDF)', () => {
   it('splitst niet als pagina 1 geen naamvak heeft', () => {
     expect(starts('.n.n.n')).toBeNull();
   });
+  it('vindt het ritme ook met een extra naamvak binnen elke toets', () => {
+    expect(starts('n....nn....nn....n')).toEqual([6, 12]);
+  });
   it('splitst niet bij een onregelmatig patroon', () => {
     expect(starts('n.n..n.')).toBeNull();
   });
@@ -234,11 +238,11 @@ describe('classSplitStarts (hele klas in één PDF)', () => {
 
     it('klas: alle voorbladen gelijk → zeker splitsen', () => {
       const ps = [0, 1, 2, 3].flatMap((k) => [page(true, ocr(voorblad, k)), page(false, ocr(vervolg, k))]);
-      expect(classSplitStarts(ps)).toEqual({ starts: [2, 4, 6], sure: true });
+      expect(classSplitStarts(ps)).toMatchObject({ starts: [2, 4, 6], sure: true });
     });
     it('klas met één blad per leerling → zeker splitsen', () => {
       const ps = [0, 1, 2, 3].map((k) => page(true, ocr(voorblad, k)));
-      expect(classSplitStarts(ps)).toEqual({ starts: [1, 2, 3], sure: true });
+      expect(classSplitStarts(ps)).toMatchObject({ starts: [1, 2, 3], sure: true });
     });
     it('één leerling met de naam op elk (ander) blad → niet splitsen', () => {
       const kop = ['naam', 'klas', 'scheikunde'];
@@ -250,9 +254,47 @@ describe('classSplitStarts (hele klas in één PDF)', () => {
       ];
       expect(classSplitStarts(bladen.map((b) => page(true, [...kop, ...b])))).toBeNull();
     });
-    it('één slecht gescand voorblad → wel splitsen, maar niet zeker', () => {
+    it('klas met een naamvak ook op het laatste blad (antwoordblad) → zeker splitsen', () => {
+      // 3 leerlingen × 6 pagina's; naam op blad 1 (voorblad) en blad 6 (antwoordblad).
+      const bladen = [voorblad, vervolg, ['opgave', 'figuur', 'tabel', 'meting', 'proef', 'resultaat'], ['conclusie', 'verklaar', 'waarom', 'formule', 'eenheid', 'afronden'], [], ['antwoordblad', 'invullen']];
+      const ps = [0, 1, 2].flatMap((k) => bladen.map((b, j) => page(j === 0 || j === 5, b.length ? ocr(b, k) : [])));
+      expect(classSplitStarts(ps)).toMatchObject({ starts: [6, 12], sure: true });
+    });
+    it('wisselend aantal pagina\'s (4, 6, 8) → splitsen bij elk voorblad', () => {
+      const student = (k: number, len: number) => [page(true, ocr(voorblad, k)), ...Array.from({ length: len - 1 }, (_, j) => page(false, ocr(vervolg, j)))];
+      const ps = [...student(0, 6), ...student(1, 8), ...student(2, 4), ...student(3, 6)];
+      expect(classSplitStarts(ps)).toEqual({ starts: [6, 14, 18], sure: true, method: 'voorblad' });
+    });
+    it('wisselend aantal met een gemist voorblad → hersteld via het 2e blad', () => {
+      const student = (k: number, len: number, leesbaar = true) => [page(true, leesbaar ? ocr(voorblad, k) : ['vlek', 'ruis', 'grijs', 'kreukel', 'scan', 'vaag']), ...Array.from({ length: len - 1 }, (_, j) => page(false, ocr(j === 0 ? vervolg : [...vervolg.slice(0, 3), 'blad', `extra${j}`, 'opgave', 'vraag', 'tekst'], j)))];
+      const ps = [...student(0, 6), ...student(1, 4), ...student(2, 6, false), ...student(3, 4), ...student(4, 6)];
+      // Voorblad van leerling 3 (p. 11) onleesbaar, maar p. 12 is weer het 2e blad: hersteld.
+      expect(classSplitStarts(ps)).toEqual({ starts: [6, 10, 16, 20], sure: true, method: 'voorblad' });
+    });
+    it('wisselend aantal met een gemist voorblad zonder aanwijzing → alleen voorstellen', () => {
+      // Lengtes 6, 6, 6, 6, 4; bij leerling 2 zijn voorblad én 2e blad onleesbaar: dan komen
+      // leerling 1 en 2 samen in één deel van 12 pagina's, opvallend lang naast de rest → niet zeker.
+      const vlek = ['vlek', 'ruis', 'grijs', 'kreukel', 'scan', 'vaag'];
+      const student = (k: number, len: number, leesbaar = true) => [
+        page(true, leesbaar ? ocr(voorblad, k) : vlek),
+        page(false, leesbaar ? ocr(vervolg, k) : vlek),
+        ...Array.from({ length: len - 2 }, (_, j) => page(false, [`blad${j}`, 'opgave', 'vraag', 'tekst', 'figuur', `x${j}y`])),
+      ];
+      const ps = [...student(0, 6), ...student(1, 6, false), ...student(2, 6), ...student(3, 6), ...student(4, 4)];
+      const r = analyzeClassSplit(ps);
+      expect(r.result).toMatchObject({ starts: [12, 18, 24], sure: false, method: 'voorblad' });
+      expect(r.log.join('\n')).toMatch(/opvallend lang/);
+    });
+    it('legt de afweging uit', () => {
+      const ps = [0, 1, 2].flatMap((k) => [page(true, ocr(voorblad, k)), page(false, ocr(vervolg, k))]);
+      const { log } = analyzeClassSplit(ps);
+      expect(log.join('\n')).toMatch(/1 p\. per leerling.*past niet/);
+      expect(log.join('\n')).toMatch(/2 p\. per leerling.*past \(zeker\)/);
+      expect(log.at(-1)).toMatch(/Conclusie: 3 leerlingen/);
+    });
+    it('één slecht gescand voorblad → hersteld via het blad erna, zeker splitsen', () => {
       const ps = [0, 1, 2, 3].flatMap((k) => [page(true, k === 2 ? ['vlek', 'ruis', 'onleesbaar', 'kreukel', 'scan', 'grijs'] : ocr(voorblad, k)), page(false, vervolg)]);
-      expect(classSplitStarts(ps)).toEqual({ starts: [2, 4, 6], sure: false });
+      expect(classSplitStarts(ps)).toMatchObject({ starts: [2, 4, 6], sure: true });
     });
   });
 });

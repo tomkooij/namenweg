@@ -64,9 +64,12 @@ pagina, en geen namen of de oorspronkelijke bestandsnaam in de metadata (Info en
 - Eén scan van de hele klas wordt na de detectie automatisch per leerling opgedeeld als de
   naamvakken op een vast ritme staan (bijv. elke 2e pagina) én die pagina's hetzelfde voorblad
   zijn (vergelijking van de gedrukte tekst); elke leerling krijgt zo een eigen kandidaatnummer.
-  Eén leerling met de naam op elk (ander) blad wordt dus niet gesplitst. Bij twijfel stelt de
-  app het splitsen alleen voor (knop bij het document). Terug te draaien via de melding, uit
-  te zetten in Instellingen. Handmatig
+  Eén leerling met de naam op elk (ander) blad wordt dus niet gesplitst. Hebben leerlingen
+  niet allemaal evenveel pagina's (bijv. 4, 6 of 8), dan wordt gesplitst bij elk blad dat
+  gelijk is aan pagina 1 (het voorblad); een slecht gelezen voorblad wordt afgeleid uit het
+  blad erna. Bij twijfel stelt de app het splitsen alleen voor (knop bij het document). Terug
+  te draaien via de melding, uit te zetten in Instellingen. Het oogje bij "Dit document" laat
+  zien wat de tekstherkenning per pagina zag en hoe de splitsheuristiek besliste. Handmatig
   splitsen kan ook (vast aantal pagina's, bij elk naamvak of vóór een pagina), net als
   documenten samenvoegen (bijv. een apart gescande uitwerkbijlage)
 - Voorbeelden met verzonnen namen: drie losse toetsen, of een hele klas in één PDF. In dev ook
