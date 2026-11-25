@@ -174,6 +174,11 @@ const editor = el('div', { class: 'editor', tabindex: '0' });
 const strip = el('div', { class: 'strip' });
 const inspector = el('aside', { class: 'right' });
 const statusMsg = el('span', {}, 'Klaar. Voeg PDF-bestanden toe om te beginnen.');
+const offlineBadge = el(
+  'button',
+  { class: 'offline-badge', hidden: true, onclick: () => openHelp('privacy'), title: 'Alle onderdelen zijn op deze computer opgeslagen: de app werkt nu ook zonder internet.' },
+  '✓ werkt offline',
+);
 const progressBar = el('div');
 const progress = el('div', { class: 'progress', hidden: true }, progressBar);
 const btnStop = el('button', { class: 'btn small', hidden: true, onclick: () => stopDetect(), title: 'Automatische detectie stoppen' }, '⏹ Stop');
@@ -260,7 +265,7 @@ app.append(
     el('section', { class: 'center' }, toolbar, el('div', { class: 'editor-wrap' }, editor, busyBanner), strip),
     inspector,
   ),
-  el('footer', { class: 'status' }, statusMsg),
+  el('footer', { class: 'status' }, statusMsg, el('span', { class: 'spacer' }), offlineBadge),
 );
 
 fileInput.addEventListener('change', () => {
@@ -2323,7 +2328,7 @@ function openHelp(section?: string) {
         el('li', {}, 'De app is een statische webpagina. PDF\'s worden alleen in het geheugen van je browser geopend en nergens naartoe gestuurd.'),
         el('li', {}, 'Ook de tekstherkenning (Tesseract OCR) draait lokaal in je browser; de herkenningsmodellen worden van deze website zelf geladen, niet van een externe dienst.'),
         el('li', {}, 'Een Content-Security-Policy verbiedt de browser technisch om verbinding te maken met andere servers.'),
-        el('li', {}, 'Na de eerste keer laden werkt de app ook offline. Test het gerust: zet je wifi uit en gebruik de app.'),
+        el('li', {}, 'Bij het eerste bezoek worden alle onderdelen (ca. 30 MB, eenmalig) op de achtergrond opgeslagen, ook de tekstherkenning. Staat rechtsonder "✓ werkt offline", dan werkt de app volledig zonder internet. Test het gerust: zet je wifi uit en gebruik de app.'),
         el('li', {}, 'In de browser worden alleen bewaard: je instellingen, je sjablonen (alleen posities van vakken) en de OCR-taalmodellen (openbare data, voor offline gebruik). Nooit bestanden, scans of namen. Sluit je het tabblad, dan zijn alle geopende documenten weg.'),
       ),
       el('h3', {}, '✂ Echt verwijderen, niet alleen afdekken'),
@@ -2467,6 +2472,16 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
     navigator.serviceWorker.getRegistrations().then((rs) => rs.forEach((r) => r.unregister()));
   } else {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
+    // "✓ werkt offline" tonen zodra de service worker alles heeft opgeslagen.
+    const check = async (tries: number) => {
+      try {
+        if (await caches.match('./__offline-ready')) return void (offlineBadge.hidden = false);
+      } catch {
+        /* geen cache-toegang (privévenster): dan geen melding */
+      }
+      if (tries > 0) setTimeout(() => check(tries - 1), 5000);
+    };
+    check(240);
   }
 }
 

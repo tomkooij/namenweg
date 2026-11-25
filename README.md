@@ -26,7 +26,9 @@ een analyse of gebruiken als voorbeeld, dan moeten die gegevens eruit. NamenWeg 
   website geladen, niet van een externe CDN.
 - Een strikte **Content-Security-Policy** verbiedt de browser om verbinding te maken met andere
   servers.
-- Na de eerste keer laden werkt de app ook **offline** (service worker).
+- Werkt volledig **offline**: bij het eerste bezoek slaat de service worker alle onderdelen op
+  (app, OCR-engine en taalmodellen, pdf.js-decoders; ca. 30 MB, eenmalig). Rechtsonder staat dan
+  "✓ werkt offline". De lijst met bestanden wordt bij het bouwen gegenereerd (`vite.config.ts`).
 - In de browser worden alleen bewaard: instellingen, sjablonen (alleen posities van vakken) en de
   OCR-taalmodellen (openbare data, voor offline gebruik). Nooit scans of namen. Sluit je het
   tabblad, dan zijn alle geopende documenten weg.

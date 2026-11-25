@@ -1202,3 +1202,17 @@ h3.with-eye {
 .an-table td.an-note {
   color: var(--muted);
 }
+
+.offline-badge {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ok);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.offline-badge[hidden] {
+  display: none;
+}
