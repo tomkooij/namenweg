@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  classSplitStarts,
+  printedSimilarity,
+  printedWords,
   completeFromPeers,
   findLabels,
   findNameWords,
@@ -185,5 +188,86 @@ describe('refineWithInk', () => {
     expect(r.x + r.w).toBeGreaterThan(0.3);
     expect(r.x + r.w).toBeLessThanOrEqual(0.36 + 1e-9);
     expect(r.y).toBeCloseTo(0.15, 5);
+  });
+});
+
+describe('classSplitStarts (hele klas in één PDF)', () => {
+  /** 'n' = pagina met naamvak, '.' = pagina zonder; zonder gedrukte tekst (dus: twijfel). */
+  const pages = (pat: string) => [...pat].map((c) => ({ boxes: c === 'n' ? [{ kind: 'naam' as const }] : [] }));
+  const starts = (pat: string) => classSplitStarts(pages(pat))?.starts ?? null;
+
+  it('vindt het ritme bij twee bladen per leerling', () => {
+    expect(starts('n.n.n.n.')).toEqual([2, 4, 6]);
+  });
+  it('vindt het ritme bij één blad per leerling', () => {
+    expect(starts('nnnn')).toEqual([1, 2, 3]);
+  });
+  it('vangt een gemist naamvak op', () => {
+    expect(starts('n.n...n.n.')).toEqual([2, 4, 6, 8]);
+  });
+  it('splitst niet bij één leerling met een naamvak op de bijlage', () => {
+    expect(starts('n..n')).toBeNull();
+  });
+  it('splitst niet bij één of twee leerlingen', () => {
+    expect(starts('n.')).toBeNull();
+    expect(starts('n.n.')).toBeNull();
+  });
+  it('splitst niet als pagina 1 geen naamvak heeft', () => {
+    expect(starts('.n.n.n')).toBeNull();
+  });
+  it('splitst niet bij een onregelmatig patroon', () => {
+    expect(starts('n.n..n.')).toBeNull();
+  });
+  it('splitst niet als te weinig naamvakken gevonden zijn', () => {
+    expect(starts('n...n...........')).toBeNull();
+  });
+  it('is niet zeker zonder gedrukte tekst om te vergelijken', () => {
+    expect(classSplitStarts(pages('n.n.n.n.'))?.sure).toBe(false);
+  });
+
+  describe('met gedrukte tekst (vingerafdruk)', () => {
+    const voorblad = ['proefwerk', 'natuurkunde', 'hoofdstuk', 'naam', 'leerlingnummer', 'datum', 'snelheid', 'bereken'];
+    const vervolg = ['energie', 'vermogen', 'grafiek', 'rendement', 'bepaal', 'tijd', 'motor', 'lamp'];
+    const page = (naam: boolean, printed: string[]) => ({ boxes: naam ? [{ kind: 'naam' as const }] : [], printed });
+    /** OCR leest nooit precies hetzelfde: laat per pagina een woord weg en voeg ruis toe. */
+    const ocr = (words: string[], k: number) => [...words.filter((_, i) => i !== k % words.length), `ruis${k}`];
+
+    it('klas: alle voorbladen gelijk → zeker splitsen', () => {
+      const ps = [0, 1, 2, 3].flatMap((k) => [page(true, ocr(voorblad, k)), page(false, ocr(vervolg, k))]);
+      expect(classSplitStarts(ps)).toEqual({ starts: [2, 4, 6], sure: true });
+    });
+    it('klas met één blad per leerling → zeker splitsen', () => {
+      const ps = [0, 1, 2, 3].map((k) => page(true, ocr(voorblad, k)));
+      expect(classSplitStarts(ps)).toEqual({ starts: [1, 2, 3], sure: true });
+    });
+    it('één leerling met de naam op elk (ander) blad → niet splitsen', () => {
+      const kop = ['naam', 'klas', 'scheikunde'];
+      const bladen = [
+        ['reactie', 'zuur', 'base', 'oplossing', 'neutraliseren', 'vergelijking'],
+        ['molaire', 'massa', 'berekening', 'gram', 'stof', 'hoeveelheid'],
+        ['verbranding', 'zuurstof', 'koolstofdioxide', 'water', 'warmte', 'brandstof'],
+        ['evenwicht', 'concentratie', 'temperatuur', 'druk', 'verschuiving', 'katalysator'],
+      ];
+      expect(classSplitStarts(bladen.map((b) => page(true, [...kop, ...b])))).toBeNull();
+    });
+    it('één slecht gescand voorblad → wel splitsen, maar niet zeker', () => {
+      const ps = [0, 1, 2, 3].flatMap((k) => [page(true, k === 2 ? ['vlek', 'ruis', 'onleesbaar', 'kreukel', 'scan', 'grijs'] : ocr(voorblad, k)), page(false, vervolg)]);
+      expect(classSplitStarts(ps)).toEqual({ starts: [2, 4, 6], sure: false });
+    });
+  });
+});
+
+describe('printedWords / printedSimilarity', () => {
+  it('houdt alleen zeker gelezen woorden zonder cijfers over', () => {
+    const ws = line(1, 0, ['Proefwerk', 0], ['natuurkunde', 100], ['H3', 200], ['krabbel', 300, 40], ['2024abc', 400], ['de', 500]);
+    expect(printedWords(ws)).toEqual(['proefwerk', 'natuurkunde']);
+  });
+  it('geeft null bij te weinig tekst', () => {
+    expect(printedSimilarity(['a1aa', 'b1bb'], ['a1aa', 'b1bb'])).toBeNull();
+  });
+  it('meet overlap ten opzichte van de kleinste pagina', () => {
+    const a = ['een1', 'twee', 'drie', 'vier', 'vijf', 'zes1'];
+    expect(printedSimilarity(a, [...a, 'zeven', 'acht'])).toBe(1);
+    expect(printedSimilarity(a, ['xxxx', 'yyyy', 'zzzz', 'vier', 'vijf', 'zes1'])).toBe(0.5);
   });
 });

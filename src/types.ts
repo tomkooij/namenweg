@@ -41,6 +41,11 @@ export interface PageState {
   checked?: boolean;
   /** Gedraaide oriëntaties zijn al doorzocht (of niet nodig). */
   rotChecked?: boolean;
+  /**
+   * Vingerafdruk van de gedrukte tekst (goed leesbare woorden), om te zien of pagina's
+   * hetzelfde blad zijn. Alleen in het geheugen.
+   */
+  printed?: string[];
 }
 
 export interface Settings {
@@ -70,6 +75,8 @@ export interface Settings {
   padding: number;
   showLabels: boolean;
   searchFileNames: boolean;
+  /** Eén scan van de hele klas automatisch per leerling opdelen. */
+  autoSplit: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -99,4 +106,5 @@ export const DEFAULT_SETTINGS: Settings = {
   padding: 0.5,
   showLabels: true,
   searchFileNames: true,
+  autoSplit: true,
 };

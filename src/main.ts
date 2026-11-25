@@ -3,7 +3,7 @@ import { zipSync } from 'fflate';
 import { DEFAULT_SETTINGS, type Box, type BoxKind, type PageState, type Rot, type Settings } from './types';
 import { openFile, isSupported, release, withRotation, type Source } from './pdfio';
 import { detectPage, norm } from './detect';
-import { completeFromPeers, InkMask, nameTokensFromFileName, refineWithInk } from './detect-core';
+import { classSplitStarts, completeFromPeers, InkMask, nameTokensFromFileName, refineWithInk } from './detect-core';
 import { setWorkerCount, defaultWorkerCount, onOcrStatus } from './ocr';
 import { applyRedactions, exportDocument, verifyOutput, combineDocuments, type VerifyResult } from './redact';
 import { el, uid, uniqueNumber, fillTemplate, safeFileName, download, toCsv, fmtBytes } from './util';
@@ -24,6 +24,10 @@ interface Doc {
   parts?: { raw: Raw; idx: number }[];
   /** Gemiddelde bestandsgrootte per pagina van het origineel (voor automatische kwaliteit). */
   bpp?: number;
+  /** Al bekeken of dit een scan van de hele klas is (niet nog eens automatisch splitsen). */
+  splitChecked?: boolean;
+  /** Lijkt een klassenscan, maar niet zeker genoeg: voorgestelde splitspunten. */
+  splitSuggest?: number[];
 }
 
 /** Een geopend bronbestand; kan door meerdere documenten gedeeld worden. */
@@ -311,12 +315,17 @@ function setProgress(done: number, total: number) {
 onOcrStatus((m) => m && setStatus(m));
 
 let toastTimer = 0;
-function toast(msg: string) {
+function toast(msg: string, action?: { label: string; run: () => void }) {
   document.querySelector('.toast')?.remove();
-  const t = el('div', { class: 'toast', role: 'status' }, msg);
+  const t = el(
+    'div',
+    { class: 'toast', role: 'status' },
+    msg,
+    action ? el('button', { class: 'toast-btn', onclick: () => { t.remove(); action.run(); } }, action.label) : null,
+  );
   document.body.append(t);
   clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => t.remove(), 3500);
+  toastTimer = window.setTimeout(() => t.remove(), action ? 20000 : 3500);
 }
 
 // ───────────────────────── Bestanden ─────────────────────────
@@ -417,9 +426,9 @@ function clearAll() {
 // ───────────────────────── Splitsen ─────────────────────────
 
 /** Deel een document op in meerdere documenten (bijv. één scan van de hele klas). */
-function splitDoc(d: Doc, starts: number[]) {
+function splitDoc(d: Doc, starts: number[], quiet = false): Doc[] {
   const s = [...new Set(starts.filter((i) => i > 0 && i < d.pages.length))].sort((a, b) => a - b);
-  if (!s.length || !d.parts) return;
+  if (!s.length || !d.parts) return [];
   const bounds = [0, ...s, d.pages.length];
   const used = usedNumbers(d);
   const parts: Doc[] = [];
@@ -435,6 +444,7 @@ function splitDoc(d: Doc, starts: number[]) {
       pages: idx.map((i, j) => ({ ...structuredClone(d.pages[i]), index: j, boxes: d.pages[i].boxes.map((b) => ({ ...b, id: uid() })) })),
       num,
       status: 'klaar',
+      splitChecked: true,
     };
     attachParts(nd, idx.map((i) => d.parts![i]));
     parts.push(nd);
@@ -449,36 +459,38 @@ function splitDoc(d: Doc, starts: number[]) {
     selBox = null;
   }
   undoStack.length = redoStack.length = 0;
-  toast(`Opgesplitst in ${parts.length} documenten.`);
+  if (!quiet) toast(`Opgesplitst in ${parts.length} documenten.`);
   renderAll();
+  return parts;
 }
 
-/** Voeg document b achter document a (bijv. een apart gescande uitwerkbijlage). */
-function mergeDocs(a: Doc, b: Doc) {
-  if (!a.parts || !b.parts) return;
+/** Plak documenten achter elkaar (bijv. een apart gescande uitwerkbijlage). */
+function mergeDocs(list: Doc[], name = list.map((d) => d.name).join(' + '), quiet = false): Doc | null {
+  if (list.length < 2 || list.some((d) => !d.parts)) return null;
   const nd: Doc = {
     id: uid(),
-    name: `${a.name} + ${b.name}`,
-    file: a.file,
+    name,
+    file: list[0].file,
     src: null,
-    pages: [...a.pages, ...b.pages].map((p, j) => ({ ...structuredClone(p), index: j, boxes: p.boxes.map((x) => ({ ...x, id: uid() })) })),
-    num: a.num,
+    pages: list.flatMap((d) => d.pages).map((p, j) => ({ ...structuredClone(p), index: j, boxes: p.boxes.map((x) => ({ ...x, id: uid() })) })),
+    num: list[0].num,
     status: 'klaar',
+    splitChecked: true,
   };
-  attachParts(nd, [...a.parts, ...b.parts]);
-  releaseDoc(a);
-  releaseDoc(b);
-  dropFromQueue(a);
-  dropFromQueue(b);
-  const at = docs.indexOf(a);
-  docs.splice(at, 1, nd);
-  docs.splice(docs.indexOf(b), 1);
+  attachParts(nd, list.flatMap((d) => d.parts!));
+  for (const d of list) {
+    releaseDoc(d);
+    dropFromQueue(d);
+  }
+  docs.splice(docs.indexOf(list[0]), 1, nd);
+  for (const d of list.slice(1)) docs.splice(docs.indexOf(d), 1);
   cur = nd;
   curPage = 0;
   selBox = null;
   undoStack.length = redoStack.length = 0;
-  toast(`Samengevoegd: ${nd.pages.length} pagina's.`);
+  if (!quiet) toast(`Samengevoegd: ${nd.pages.length} pagina's.`);
   renderAll();
+  return nd;
 }
 
 function openSplit(d: Doc) {
@@ -626,7 +638,11 @@ function pumpDetect() {
           setStatus(
             `Detectie klaar: ${ok.length} document(en), ${nBoxes} vak(ken)${added ? `, waarvan ${added} aangevuld op basis van andere pagina's` : ''}. Controleer en exporteer.`,
           );
-          checkWarnings();
+          // Eén melding, zodat de knop "Terugdraaien" niet door een waarschuwing verdrongen wordt.
+          const split = autoSplitClasses();
+          const warn = missingNameWarning();
+          if (split) toast(warn ? `${split.msg} ${warn}` : split.msg, split.action);
+          else if (warn) toast(warn);
           queueRotationChecks();
         });
       } else if (!mainLeft && detectQueue.every((j) => j.phase === 'gedraaid') && job.phase === 'rechtop' && !detectRunningMain()) {
@@ -724,6 +740,7 @@ async function runDetect(doc: Doc, p: PageState, phase: Phase) {
     }
     p.detect = 'klaar';
     p.detectNote = res.note;
+    p.printed = res.printed;
   } catch (e) {
     p.detect = 'fout';
     p.detectNote = 'Fout bij detectie: ' + (e instanceof Error ? e.message : String(e));
@@ -784,9 +801,87 @@ async function completeMissing(): Promise<number> {
   return added;
 }
 
-function checkWarnings() {
+/**
+ * Scan van een hele klas in één PDF? Dan automatisch per leerling opdelen, zodat elke leerling
+ * een eigen kandidaatnummer krijgt. Eén keer per document; terug te draaien via de melding.
+ */
+function autoSplitClasses(): { msg: string; action?: { label: string; run: () => void } } | null {
+  const splits: { name: string; parts: Doc[]; per: number }[] = [];
+  const maybe: Doc[] = [];
+  for (const d of [...docs]) {
+    if (d.status !== 'klaar' || d.splitChecked) continue;
+    if (d.pages.some((p) => p.detect === 'bezig' || p.detect === 'nog niet')) continue;
+    d.splitChecked = true;
+    if (!S.autoSplit) continue;
+    const res = classSplitStarts(d.pages);
+    if (!res) continue;
+    if (!res.sure) {
+      // Twijfel (bijv. weinig gedrukte tekst om te vergelijken): voorstellen, niet zelf doen.
+      d.splitSuggest = res.starts;
+      maybe.push(d);
+      continue;
+    }
+    const name = d.name;
+    const n = d.pages.length;
+    const parts = splitDoc(d, res.starts, true);
+    if (parts.length) splits.push({ name, parts, per: n / parts.length });
+  }
+  if (maybe.length) renderDocList();
+  if (!splits.length && !maybe.length) return null;
+  const pp = (n: number) => `${n} pagina${n === 1 ? '' : "'s"}`;
+  const maybeMsg = maybe.length
+    ? maybe.length === 1
+      ? `"${maybe[0].name}" lijkt ${maybe[0].splitSuggest!.length + 1} toetsen te bevatten, maar dat is niet zeker.`
+      : `${maybe.length} bestanden lijken meerdere toetsen te bevatten, maar dat is niet zeker.`
+    : '';
+  if (!splits.length)
+    return {
+      msg: `${maybeMsg} Controleer en kies "Opdelen" (ook bij het document in de lijst).`,
+      action: { label: 'Opdelen', run: () => maybe.forEach(applySuggestedSplit) },
+    };
+  const total = splits.reduce((a, s) => a + s.parts.length, 0);
+  const msg =
+    (splits.length === 1
+      ? `"${splits[0].name}" bevat ${total} toetsen (${pp(splits[0].per)} per leerling) en is opgedeeld; elke toets krijgt een eigen nummer.`
+      : `${splits.length} bestanden met een hele klas zijn opgedeeld in samen ${total} toetsen (${splits.map((s) => `${s.parts.length}× ${pp(s.per)}`).join(', ')}); elke toets krijgt een eigen nummer.`) +
+    (maybeMsg ? ` ${maybeMsg} Zie de lijst.` : '');
+  return {
+    msg,
+    // Alles in één keer terugdraaien; delen die intussen gewijzigd zijn (bijv. weer gesplitst) overslaan.
+    action: {
+      label: 'Terugdraaien',
+      run: () => {
+        const restored: Doc[] = [];
+        for (const s of splits) {
+          const nd = s.parts.every((x) => docs.includes(x)) ? mergeDocs(s.parts, s.name, true) : null;
+          if (nd) restored.push(nd);
+        }
+        if (restored.length) {
+          cur = restored[0];
+          curPage = 0;
+          renderAll();
+        }
+        const failed = splits.length - restored.length;
+        toast(
+          `${restored.length} bestand(en) teruggedraaid naar één document.` +
+            (failed ? ` ${failed} bestand(en) niet: de delen zijn intussen gewijzigd.` : ''),
+        );
+      },
+    },
+  };
+}
+
+/** Een voorgestelde splitsing (bij twijfel) alsnog uitvoeren. */
+function applySuggestedSplit(d: Doc) {
+  const st = d.splitSuggest;
+  d.splitSuggest = undefined;
+  if (!st || !docs.includes(d)) return;
+  splitDoc(d, st);
+}
+
+function missingNameWarning(): string | null {
   const missing = docs.filter((d) => d.status === 'klaar' && !d.pages.some((p) => p.boxes.some((b) => b.kind === 'naam' || b.text)));
-  if (missing.length) toast(`Let op: bij ${missing.length} document(en) is geen naamvak gevonden. Teken dat handmatig.`);
+  return missing.length ? `Let op: bij ${missing.length} document(en) is geen naamvak gevonden. Teken dat handmatig.` : null;
 }
 
 // ───────────────────────── Rendering: lijst ─────────────────────────
@@ -807,6 +902,17 @@ function docChips(d: Doc) {
   if (!busy && odd.length)
     chips.push(
       el('span', { class: 'chip warn', title: "Op deze pagina('s) staat geen vak, terwijl dezelfde pagina bij de meeste andere documenten wél vakken heeft." }, `controleer p. ${odd.map((i) => i + 1).join(', ')}`),
+    );
+  if (d.splitSuggest)
+    chips.push(
+      el('button', {
+        class: 'chip warn act',
+        title: 'Dit bestand lijkt meerdere toetsen te bevatten. Klik om het per leerling op te delen.',
+        onclick: (e: Event) => {
+          e.stopPropagation();
+          applySuggestedSplit(d);
+        },
+      }, `✂ ${d.splitSuggest.length + 1} toetsen? Opdelen`),
     );
   if (d.exported) chips.push(el('span', { class: 'chip ok' }, '✓ geëxporteerd'));
   return chips;
@@ -1183,7 +1289,19 @@ function emptyState() {
           '🧪 Probeer met voorbeeld',
         ),
       ),
-      el('p', { class: 'note', style: 'margin-bottom:0' }, 'Het voorbeeld gebruikt verzonnen namen en wordt in je browser gemaakt.'),
+      el(
+        'p',
+        { class: 'note', style: 'margin-bottom:0' },
+        'Het voorbeeld gebruikt verzonnen namen en wordt in je browser gemaakt. Of probeer ',
+        el('button', {
+          class: 'linkbtn',
+          onclick: async () => {
+            const { makeClassDemoFile } = await import('./demo');
+            addFiles([await makeClassDemoFile()]);
+          },
+        }, 'een hele klas in één PDF'),
+        '.',
+      ),
     ),
   );
 }
@@ -1437,7 +1555,7 @@ function renderInspector() {
               const nxt = docs[docs.indexOf(d) + 1];
               if (!nxt) return;
               if (detectQueue.some((j) => j.doc === d || j.doc === nxt)) return toast('Wacht tot de detectie klaar is.');
-              if (confirm(`"${nxt.name}" achter "${d.name}" plakken tot één document (${docText(d)})?`)) mergeDocs(d, nxt);
+              if (confirm(`"${nxt.name}" achter "${d.name}" plakken tot één document (${docText(d)})?`)) mergeDocs([d, nxt]);
             },
           },
           '⤵ Samenvoegen met volgende',
@@ -2031,6 +2149,7 @@ function openSettings() {
         check('detectKlas', 'Klas verwijderen'),
         check('searchFileNames', 'Ook zoeken naar de naam uit de bestandsnaam, overal op de pagina', 'Heet het bestand bijv. "jansen piet.pdf", dan worden de woorden "jansen" en "piet" overal op de pagina gezocht (werkt het best bij duidelijk schrift).'),
         namesField,
+        check('autoSplit', 'Scan van een hele klas automatisch per leerling opdelen', 'Staat het naamvak op een vast ritme (bijv. op elke 2e pagina), dan krijgt elke leerling een eigen document en kandidaatnummer.'),
         check('searchRotated', 'Ook zoeken in gedraaide pagina\'s (90°/180°/270°)', 'Alleen als er rechtop niets gevonden wordt. Kost wat extra tijd.'),
         text('kwNaam', 'Labels voor naam', 'Gescheiden door komma\'s. Hoofdletters en kleine OCR-fouten maken niet uit.', true),
         text('kwNummer', 'Labels voor nummer', undefined, true),
@@ -2117,7 +2236,7 @@ function openHelp(section?: string) {
       el('h3', {}, '💡 Tips'),
       el('ul', {},
         el('li', {}, 'Verwerk een hele klas tegelijk: sleep alle PDF\'s in één keer naar het venster.'),
-        el('li', {}, `Hele stapel in één PDF gescand? Gebruik "✂ Splitsen…" bij het document om per leerling op te delen.`),
+        el('li', {}, `Hele stapel in één PDF gescand? Staan de naamvakken op een vast ritme (bijv. elke 2e pagina) en zijn dat steeds hetzelfde voorblad, dan deelt de app de scan na de detectie automatisch per leerling op, met voor elke leerling een eigen nummer. Bij twijfel verschijnt bij het document een knop "Opdelen". Lukt dat niet, gebruik dan "✂ Splitsen…" onder "Meer documentacties". Wil je toch één PDF? Kies na het exporteren "Eén samengevoegde PDF".`),
         el('li', {}, 'Ook losse scans als JPG of PNG worden ondersteund.'),
         el('li', {}, 'Bestanden te groot? Kies in ☰ Menu → Instellingen een lagere resolutie of grijswaarden.'),
       ),
@@ -2242,7 +2361,12 @@ if (import.meta.env.DEV) {
   const qs = new URLSearchParams(location.search);
   const demo = qs.get('demo');
   if (qs.get('auto') === '0') S.autoDetect = false;
-  if (demo) {
+  if (demo === 'klas' || demo === 'bladen' || demo === 'beide') {
+    // klas = hele klas in één PDF (moet splitsen); bladen = één leerling, naam op elk blad (niet splitsen)
+    import('./demo').then(async ({ makeClassDemoFile, makeMultiSheetDemoFile }) =>
+      addFiles([...(demo !== 'bladen' ? [await makeClassDemoFile()] : []), ...(demo !== 'klas' ? [await makeMultiSheetDemoFile()] : [])]),
+    );
+  } else if (demo) {
     Promise.all(
       demo.split(',').map(async (n) => {
         const r = await fetch(`/scans/${encodeURIComponent(n)}`);

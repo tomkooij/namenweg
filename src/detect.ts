@@ -10,7 +10,7 @@ import type { Box, Rot, Settings } from './types';
 import { recognize, type OcrWord } from './ocr';
 import { rotateCanvas } from './pdfio';
 import { uid } from './util';
-import { type DetectResult, findNameWords, findLabels, InkMask, mergeBoxes, norm, parsePhrases, regionsFor, unrotate } from './detect-core';
+import { type DetectResult, findNameWords, findLabels, InkMask, mergeBoxes, norm, parsePhrases, printedWords, regionsFor, unrotate } from './detect-core';
 
 export { norm };
 export type { DetectResult };
@@ -188,6 +188,7 @@ export async function detectPage(
     boxes = [...boxes, ...extra];
     return {
       upright: r === 0,
+      printed: r === 0 ? printedWords(words0) : undefined,
       boxes,
       rotation: r,
       labels: personal.map((l) => l.text),
@@ -199,7 +200,7 @@ export async function detectPage(
   const extra = nameBoxes(words0, 0, []);
   if (extra.length) {
     extra[0].text = true;
-    return { upright, boxes: extra, rotation: 0, labels: [], note: `Geen labels, wel ${extra.length}× een gezochte naam gevonden` };
+    return { upright, printed: printedWords(words0), boxes: extra, rotation: 0, labels: [], note: `Geen labels, wel ${extra.length}× een gezochte naam gevonden` };
   }
-  return { upright, boxes: [], rotation: 0, labels: [], note: 'Geen labels gevonden' };
+  return { upright, printed: printedWords(words0), boxes: [], rotation: 0, labels: [], note: 'Geen labels gevonden' };
 }

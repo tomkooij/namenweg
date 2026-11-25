@@ -61,8 +61,17 @@ pagina, en geen namen of de oorspronkelijke bestandsnaam in de metadata (Info en
 - Sjablonen: vaklayout opslaan en op een volgende klas toepassen (alleen posities, geen namen)
 - Vakken tekenen, verplaatsen (ook met pijltjestoetsen), schalen, verwijderen; ongedaan
   maken/opnieuw; Shift+slepen voor een strook over de volle breedte
-- Eén scan van de hele klas splitsen per leerling (vast aantal pagina's, bij elk naamvak of
-  handmatig), en documenten samenvoegen (bijv. een apart gescande uitwerkbijlage)
+- Eén scan van de hele klas wordt na de detectie automatisch per leerling opgedeeld als de
+  naamvakken op een vast ritme staan (bijv. elke 2e pagina) én die pagina's hetzelfde voorblad
+  zijn (vergelijking van de gedrukte tekst); elke leerling krijgt zo een eigen kandidaatnummer.
+  Eén leerling met de naam op elk (ander) blad wordt dus niet gesplitst. Bij twijfel stelt de
+  app het splitsen alleen voor (knop bij het document). Terug te draaien via de melding, uit
+  te zetten in Instellingen. Handmatig
+  splitsen kan ook (vast aantal pagina's, bij elk naamvak of vóór een pagina), net als
+  documenten samenvoegen (bijv. een apart gescande uitwerkbijlage)
+- Voorbeelden met verzonnen namen: drie losse toetsen, of een hele klas in één PDF. In dev ook
+  `?demo=klas` (moet splitsen), `?demo=bladen` (één leerling met de naam op elk blad: mag niet
+  splitsen) of `?demo=beide`
 - Pagina's draaien (vakken draaien mee), inzoomen op de vakken, pagina's als gecontroleerd markeren
 - Snelle detectie in twee fasen: eerst rechtop, daarna op de achtergrond gedraaide pagina's
 - Vakken kopiëren naar alle pagina's / alle documenten

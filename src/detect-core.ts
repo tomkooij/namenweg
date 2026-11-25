@@ -48,6 +48,8 @@ export interface PxRect {
 export interface DetectResult {
   /** Rechtop staat duidelijk leesbare gedrukte tekst: pagina is zeker niet gedraaid. */
   upright?: boolean;
+  /** Vingerafdruk van de rechtop gelezen gedrukte tekst (zie printedWords). */
+  printed?: string[];
   boxes: Box[];
   note: string;
   rotation: Rot;
@@ -661,4 +663,70 @@ export function findNameWords(words: OcrWord[], names: string[]): { rect: PxRect
     out.push({ rect: { x0: w.x0 - 0.5 * h, y0: w.y0 - 0.6 * h, x1: w.x1 + 0.5 * h, y1: w.y1 + 0.6 * h }, text: w.text });
   }
   return out;
+}
+
+/**
+ * Herken een scan van een hele klas in één bestand: naamvakken op een vast ritme (bijv. op
+ * pagina 1, 3, 5, … bij twee bladen per leerling). Geeft de pagina's terug waar een nieuwe
+ * leerling begint (zonder 0), of null als het er niet duidelijk op lijkt.
+ *
+ * Voorwaarden: pagina 1 heeft een naamvak, alle naamvakken vallen op een veelvoud van de
+ * periode, het aantal pagina's is een veelvoud van de periode, er zijn minstens `minParts`
+ * leerlingen en bij minstens 60% daarvan is het naamvak ook echt gevonden (een gemist naamvak
+ * wordt zo opgevangen).
+ */
+export function classSplitStarts(
+  pages: { boxes: { kind: BoxKind }[]; printed?: string[] }[],
+  minParts = 3,
+): { starts: number[]; sure: boolean } | null {
+  const named = pages.map((p, i) => (p.boxes.some((b) => b.kind === 'naam') ? i : -1)).filter((i) => i >= 0);
+  if (named[0] !== 0 || named.length < 2) return null;
+  let period = Infinity;
+  for (let i = 1; i < named.length; i++) period = Math.min(period, named[i] - named[i - 1]);
+  if (!named.every((s) => s % period === 0) || pages.length % period !== 0) return null;
+  const parts = pages.length / period;
+  if (parts < minParts || named.length / parts < 0.6) return null;
+  const starts = Array.from({ length: parts - 1 }, (_, k) => (k + 1) * period);
+
+  // Zijn de beginpagina's echt hetzelfde voorblad (klas), of verschillende bladen van één
+  // leerling met overal de naam erop? Vergelijk de gedrukte tekst met die van pagina 1.
+  let same = 0;
+  let compared = 0;
+  for (const s of starts) {
+    const sim = printedSimilarity(pages[0].printed, pages[s].printed);
+    if (sim === null) continue;
+    compared++;
+    // Hetzelfde voorblad scoort in de praktijk ~0,9–1; verschillende bladen met dezelfde kop
+    // (naam, klas, titel) blijven daar ruim onder.
+    if (sim >= SAME_SHEET) same++;
+  }
+  // Duidelijk verschillende bladen: niet splitsen.
+  if (compared >= 2 && same / compared < 0.5) return null;
+  // Te weinig te vergelijken of twijfel: wel voorstellen, niet zelf doen.
+  const sure = compared >= Math.max(2, 0.6 * starts.length) && same / compared >= 0.8;
+  return { starts, sure };
+}
+
+/** Vanaf deze overlap (0..1) geldt een pagina als hetzelfde blad. */
+export const SAME_SHEET = 0.7;
+
+/** Minimaal aantal gedrukte woorden om twee pagina's betrouwbaar te vergelijken. */
+export const MIN_PRINTED = 6;
+
+/**
+ * Vingerafdruk van een pagina: goed leesbare woorden (OCR-zekerheid ≥ 85, ≥ 4 letters, zonder
+ * cijfers). Handschrift wordt zelden zo zeker gelezen, dus dit is vooral de gedrukte tekst.
+ */
+export function printedWords(words: OcrWord[]): string[] {
+  return [...new Set(words.filter((w) => w.conf >= 85).map((w) => norm(w.text)).filter((t) => t.length >= 4 && !/\d/.test(t)))];
+}
+
+/**
+ * Overlap van twee vingerafdrukken: gedeelde woorden / grootte van de kleinste (0..1).
+ * null als er te weinig tekst is om iets te zeggen.
+ */
+export function printedSimilarity(a?: string[], b?: string[]): number | null {
+  if (!a || !b || Math.min(a.length, b.length) < MIN_PRINTED) return null;
+  const set = new Set(a);
+  return b.filter((w) => set.has(w)).length / Math.min(a.length, b.length);
 }

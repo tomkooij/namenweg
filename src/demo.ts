@@ -104,21 +104,90 @@ async function canvasJpeg(c: HTMLCanvasElement) {
   return new Uint8Array(await blob.arrayBuffer());
 }
 
+const ANSWERS = [
+  ['1  v = Δx / Δt = 100 / 9,8 = 10,2 m/s', '2  F = m · a = 70 · 2,5 = 175 N', '3  Ek = ½ m v² = 3,6 kJ'],
+  ['4  P = E / t = 3600 / 12 = 300 W', '5  zie grafiek: t = 5 s', '6  η = 0,58'],
+];
+
+/** Pagina's van één leerling: voorblad met naam en een vervolgblad zonder. */
+async function addStudent(pdf: PDFDocument, s: Student) {
+  for (const c of [page(s, true, ANSWERS[0]), page(s, false, ANSWERS[1])]) {
+    const img = await pdf.embedJpg(await canvasJpeg(c));
+    const p = pdf.addPage([595.28, 841.89]);
+    p.drawImage(img, { x: 0, y: 0, width: 595.28, height: 841.89 });
+  }
+}
+
+/** Drie losse PDF's, één per leerling. */
 export async function makeDemoFiles(): Promise<File[]> {
   const files: File[] = [];
   for (const s of STUDENTS) {
     const pdf = await PDFDocument.create();
-    const pages = [
-      page(s, true, ['1  v = Δx / Δt = 100 / 9,8 = 10,2 m/s', '2  F = m · a = 70 · 2,5 = 175 N', '3  Ek = ½ m v² = 3,6 kJ']),
-      page(s, false, ['4  P = E / t = 3600 / 12 = 300 W', '5  zie grafiek: t = 5 s', '6  η = 0,58']),
-    ];
-    for (const c of pages) {
-      const img = await pdf.embedJpg(await canvasJpeg(c));
-      const p = pdf.addPage([595.28, 841.89]);
-      p.drawImage(img, { x: 0, y: 0, width: 595.28, height: 841.89 });
-    }
+    await addStudent(pdf, s);
     const bytes = await pdf.save();
     files.push(new File([bytes as BlobPart], `${s.last.toLowerCase()} ${s.first.toLowerCase()}.pdf`, { type: 'application/pdf' }));
   }
   return files;
+}
+
+/** Eén PDF met de hele (voorbeeld)klas achter elkaar gescand: 4 leerlingen × 2 pagina's. */
+export async function makeClassDemoFile(): Promise<File> {
+  const pdf = await PDFDocument.create();
+  for (const s of [...STUDENTS, { last: 'de Vries', first: 'Sem', nr: '204871', klas: '4B' }]) await addStudent(pdf, s);
+  const bytes = await pdf.save();
+  return new File([bytes as BlobPart], 'scan klas 4B natuurkunde.pdf', { type: 'application/pdf' });
+}
+
+/** Gedrukte vragen per blad (verschillend per blad, zonder woorden die op labels lijken). */
+const SHEET_ANSWERS = [
+  ['HCl + NaOH → NaCl + H₂O', 'zie berekening hieronder', 'gelijke hoeveelheden'],
+  ['180 g/mol', 'negentig gram', 'omdat het polair is'],
+  ['CO₂ en water', 'kalkwater wordt troebel', 'volledige verbranding'],
+  ['heen en terug even snel', 'verschuift naar links', 'verlaagt de activeringsenergie'],
+];
+const SHEETS = [
+  ['Een oplossing van zoutzuur reageert met natronloog.', 'Geef de reactievergelijking van deze neutralisatie.', 'Bereken hoeveel natronloog er nodig is.'],
+  ['Bereken de molaire massa van glucose.', 'Hoeveel gram glucose bevat een halve mol?', 'Leg uit waarom suiker oplost in water.'],
+  ['Methaan verbrandt volledig met zuurstof.', 'Welke producten ontstaan bij deze verbranding?', 'Beschrijf een proef om koolstofdioxide aan te tonen.'],
+  ['Beschrijf wat een evenwichtsreactie inhoudt.', 'Wat gebeurt er bij een hogere temperatuur?', 'Leg de werking van een katalysator uit.'],
+];
+
+/** Blad met kop (naam op elk blad) en gedrukte vragen met handgeschreven antwoorden. */
+function sheet(s: Student, nr: number, questions: string[]): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = 1240;
+  c.height = 1754;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = '#fdfdfb';
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.fillStyle = '#222';
+  ctx.font = `bold 28px ${PRINT}`;
+  ctx.fillText(`Scheikunde – hoofdstuk 5   (${nr}/4)`, 90, 90);
+  let x = label(ctx, 'Naam:', 90, 170, 700);
+  handText(ctx, `${s.first} ${s.last}`, x + 10, 165, 44);
+  x = label(ctx, 'Klas:', 760, 170, 900);
+  handText(ctx, s.klas, x + 6, 165, 40);
+  ctx.fillStyle = '#333';
+  ctx.fillRect(80, 220, 1080, 3);
+  let y = 300;
+  questions.forEach((q, i) => {
+    ctx.fillStyle = '#222';
+    ctx.font = `26px ${PRINT}`;
+    ctx.fillText(`${(nr - 1) * 3 + i + 1}.  ${q}`, 90, y);
+    handText(ctx, SHEET_ANSWERS[nr - 1][i], 140, y + 90, 34);
+    y += 420;
+  });
+  return c;
+}
+
+/** Eén leerling, 4 verschillende bladen met op elk blad de naam: mag NIET gesplitst worden. */
+export async function makeMultiSheetDemoFile(): Promise<File> {
+  const pdf = await PDFDocument.create();
+  const s: Student = { last: 'de Vries', first: 'Sem', nr: '204871', klas: '4B' };
+  for (let i = 0; i < SHEETS.length; i++) {
+    const img = await pdf.embedJpg(await canvasJpeg(sheet(s, i + 1, SHEETS[i])));
+    pdf.addPage([595.28, 841.89]).drawImage(img, { x: 0, y: 0, width: 595.28, height: 841.89 });
+  }
+  const bytes = await pdf.save();
+  return new File([bytes as BlobPart], 'toets scheikunde h5 (één leerling).pdf', { type: 'application/pdf' });
 }
