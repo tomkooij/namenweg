@@ -281,6 +281,7 @@ aside.right {
   font-weight: 600;
 }
 .doc .x {
+  visibility: hidden;
   border: 0;
   background: none;
   color: var(--muted);
@@ -288,6 +289,11 @@ aside.right {
   padding: 0 4px;
   font-size: 16px;
   line-height: 1;
+}
+.doc:hover .x,
+.doc.sel .x,
+.doc .x:focus-visible {
+  visibility: visible;
 }
 .doc .x:hover {
   color: var(--err);
@@ -327,13 +333,6 @@ aside.right {
   padding: 12px 14px;
   border-top: 1px solid var(--border);
 }
-.actions .row {
-  display: flex;
-  gap: 6px;
-}
-.actions .row > * {
-  flex: 1;
-}
 
 /* Center */
 .center {
@@ -344,13 +343,12 @@ aside.right {
 }
 .toolbar {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   align-items: center;
   padding: 8px 12px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
-  overflow-x: auto;
-  scrollbar-width: thin;
 }
 .toolbar > * {
   flex: none;
@@ -365,7 +363,13 @@ aside.right {
   color: var(--muted);
   font-size: 12.5px;
 }
+.editor-wrap {
+  position: relative;
+  display: grid;
+  min-height: 0;
+}
 .editor {
+  grid-area: 1 / 1;
   overflow: auto;
   background: var(--editor-bg);
   position: relative;
@@ -422,7 +426,10 @@ aside.right {
   color: #fff;
   border-radius: 4px 4px 0 0;
   white-space: nowrap;
-  pointer-events: none;
+  cursor: pointer;
+}
+.box .tag:hover {
+  filter: brightness(1.15);
 }
 .preview .box {
   background: transparent;
@@ -877,4 +884,219 @@ dialog.wide {
   margin: 8px 14px 0;
   font-size: 12.5px;
   color: var(--muted);
+}
+
+/* Uitklapmenu's */
+details.menu {
+  position: relative;
+}
+details.menu > summary {
+  list-style: none;
+  user-select: none;
+}
+details.menu > summary::-webkit-details-marker {
+  display: none;
+}
+details.menu[open] > summary {
+  background: var(--accent-2);
+  border-color: var(--accent);
+}
+details.menu.small > summary {
+  padding: 3px 10px;
+  min-height: 26px;
+  font-size: 14px;
+  line-height: 1;
+}
+.menu-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 40;
+  min-width: 240px;
+  display: grid;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 18%);
+}
+details.menu.right .menu-list {
+  left: auto;
+  right: 0;
+}
+.mi {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: none;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.mi:hover:not(:disabled) {
+  background: var(--panel-2);
+}
+.mi:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.mi.danger {
+  color: var(--err);
+}
+.mi kbd {
+  margin-left: auto;
+  color: var(--muted);
+}
+.menu-list .mh {
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  padding: 6px 10px 2px;
+}
+.menu-list hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 4px 2px;
+  width: auto;
+}
+
+/* Inklapbare blokken in het rechterpaneel */
+details.more {
+  margin-top: 10px;
+}
+details.more > summary,
+details.fold > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12.5px;
+  user-select: none;
+}
+details.more > summary:hover,
+details.fold > summary:hover {
+  color: var(--accent);
+}
+.more-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+details.fold > summary h3 {
+  display: inline;
+}
+details.fold[open] > summary {
+  margin-bottom: 8px;
+}
+.inline {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+/* Verwerkingsmelding boven de pagina */
+.busy-banner {
+  grid-area: 1 / 1;
+  align-self: start;
+  justify-self: center;
+  z-index: 20;
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100% - 24px);
+  padding: 8px 10px 8px 14px;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  box-shadow: 0 6px 24px rgb(0 0 0 / 22%);
+  font-weight: 600;
+  font-size: 13.5px;
+}
+.busy-banner[hidden] {
+  display: none;
+}
+.busy-msg {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.busy-banner .progress {
+  width: 140px;
+  flex: none;
+}
+.spinner {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2.5px solid var(--accent-2);
+  border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Pagina die nu door de tekstherkenning gaat */
+.stage[data-scan]::before {
+  content: attr(data-scanmsg);
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: rgb(15 20 30 / 80%);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.stage[data-scan='bezig']::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 18%;
+  background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--accent) 30%, transparent) 70%, var(--accent) 100%);
+  opacity: 0.55;
+  pointer-events: none;
+  z-index: 2;
+  animation: scan 2s ease-in-out infinite alternate;
+}
+.stage[data-scan='wacht'] canvas {
+  opacity: 0.75;
+}
+@keyframes scan {
+  from {
+    top: 0;
+  }
+  to {
+    top: 82%;
+  }
+}
+.thumb .badge.busy {
+  animation: pulse 1s ease-in-out infinite alternate;
+}
+@keyframes pulse {
+  to {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spinner,
+  .stage[data-scan='bezig']::after,
+  .thumb .badge.busy {
+    animation-duration: 4s;
+  }
 }

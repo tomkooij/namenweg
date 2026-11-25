@@ -155,15 +155,44 @@ const statusMsg = el('span', {}, 'Klaar. Voeg PDF-bestanden toe om te beginnen.'
 const progressBar = el('div');
 const progress = el('div', { class: 'progress', hidden: true }, progressBar);
 const btnStop = el('button', { class: 'btn small', hidden: true, onclick: () => stopDetect(), title: 'Automatische detectie stoppen' }, '⏹ Stop');
-const themeBtn = el('button', { class: 'btn icon', title: 'Licht/donker thema', onclick: cycleTheme });
+/** Goed zichtbare melding boven de pagina zolang er iets verwerkt wordt (inlezen, OCR, exporteren). */
+const busyMsg = el('span', { class: 'busy-msg' });
+const busyBanner = el('div', { class: 'busy-banner', hidden: true, role: 'status', 'aria-live': 'polite' }, el('span', { class: 'spinner', 'aria-hidden': 'true' }), busyMsg, progress, btnStop);
 
-const btnDetectAll = el('button', { class: 'btn', onclick: () => detectAll(true) }, '🔍 Detecteer alles opnieuw');
+/** Menu-item (knop in een uitklapmenu). */
+const mi = (label: string, onclick: () => void, title = '', cls = '') => el('button', { class: 'mi ' + cls, onclick, title, role: 'menuitem' }, label);
+/** Uitklapmenu: een knop die een lijst met minder vaak gebruikte acties toont. */
+function menu(key: string, label: string, title: string, items: (HTMLElement | null)[], cls = '') {
+  const d = el(
+    'details',
+    { class: 'menu ' + cls, 'data-key': key },
+    el('summary', { class: 'btn', title, 'aria-label': title }, label),
+    el('div', { class: 'menu-list', role: 'menu' }, ...items),
+  ) as HTMLDetailsElement;
+  d.addEventListener('click', (e) => {
+    if ((e.target as HTMLElement).closest('.menu-list button')) d.open = false;
+  });
+  return d;
+}
+const menuHead = (t: string) => el('div', { class: 'mh' }, t);
+document.addEventListener('pointerdown', (e) => {
+  for (const d of document.querySelectorAll<HTMLDetailsElement>('details.menu[open]')) if (!d.contains(e.target as Node)) d.open = false;
+});
+/** Bij opnieuw opbouwen van een paneel: open menu's en uitklapblokken open laten. */
+function keepOpen(root: HTMLElement, build: () => void) {
+  const open = new Set([...root.querySelectorAll<HTMLElement>('details[open][data-key]')].map((d) => d.dataset.key));
+  build();
+  for (const d of root.querySelectorAll<HTMLDetailsElement>('details[data-key]')) if (open.has(d.dataset.key)) d.open = true;
+}
+
+const themeBtn = mi('', cycleTheme);
+const btnDetectAll = mi('🔍 Alles opnieuw detecteren', () => detectAll(true));
 const btnExportAll = el('button', { class: 'btn primary', onclick: () => exportAll() }, '⬇ Exporteer alles');
-const btnKey = el('button', { class: 'btn', onclick: downloadKey, title: 'Sleutelbestand: welke kandidaat is wie (blijft op je computer)' }, '🗝 Sleutel (CSV)');
-const btnRenumber = el('button', { class: 'btn', onclick: renumberAll, title: 'Geef alle documenten nieuwe willekeurige nummers' }, '🎲 Nieuwe nummers');
+const btnKey = mi('🗝 Sleutelbestand (CSV)', downloadKey, 'Welke kandidaat is wie (blijft op je computer)');
+const btnRenumber = mi('🎲 Alle nummers opnieuw', renumberAll, 'Geef alle documenten nieuwe willekeurige nummers');
 const btnOverview = el('button', { class: 'btn', onclick: () => openOverview(), title: "Alle pagina's in één overzicht controleren" }, '🔎 Controle-overzicht');
-const btnTemplates = el('button', { class: 'btn', onclick: () => openTemplates(), title: 'Vaklayout opslaan of toepassen' }, '📐 Sjablonen');
-const btnClear = el('button', { class: 'btn danger', onclick: clearAll }, '🗑 Alles wissen');
+const btnTemplates = mi('📐 Sjablonen…', () => openTemplates(), 'Vaklayout opslaan of toepassen');
+const btnClear = mi('🗑 Alles wissen', clearAll, '', 'danger');
 
 app.append(
   el(
@@ -172,9 +201,18 @@ app.append(
     el('div', { class: 'brand' }, el('img', { src: './favicon.svg', alt: '' }), 'NamenWeg', el('small', {}, 'toetsen anonimiseren')),
     el('button', { class: 'privacy', onclick: () => openHelp('privacy'), title: 'Hoe wordt mijn privacy beschermd?' }, '🔒 100% lokaal – er wordt niets geüpload'),
     el('div', { class: 'spacer' }),
-    el('button', { class: 'btn', onclick: openSettings }, '⚙ Instellingen'),
     el('button', { class: 'btn', onclick: () => openHelp() }, '❓ Help'),
-    themeBtn,
+    menu('main', '☰ Menu', 'Meer opties', [
+      menuHead('Alle documenten'),
+      btnDetectAll,
+      btnTemplates,
+      btnKey,
+      btnRenumber,
+      btnClear,
+      el('hr'),
+      mi('⚙ Instellingen…', openSettings),
+      themeBtn,
+    ], 'right'),
   ),
   el(
     'main',
@@ -195,20 +233,12 @@ app.append(
       ),
       attentionToggle,
       docList,
-      el(
-        'div',
-        { class: 'actions' },
-        btnExportAll,
-        el('div', { class: 'row' }, btnOverview, btnTemplates),
-        el('div', { class: 'row' }, btnDetectAll),
-        el('div', { class: 'row' }, btnKey, btnRenumber),
-        btnClear,
-      ),
+      el('div', { class: 'actions' }, btnOverview, btnExportAll),
     ),
-    el('section', { class: 'center' }, toolbar, editor, strip),
+    el('section', { class: 'center' }, toolbar, el('div', { class: 'editor-wrap' }, editor, busyBanner), strip),
     inspector,
   ),
-  el('footer', { class: 'status' }, statusMsg, el('div', { class: 'spacer' }), btnStop, progress),
+  el('footer', { class: 'status' }, statusMsg),
 );
 
 fileInput.addEventListener('change', () => {
@@ -249,6 +279,30 @@ window.addEventListener('beforeunload', (e) => {
 
 function setStatus(msg: string) {
   statusMsg.textContent = msg;
+  busyMsg.textContent = msg;
+}
+let busyLoad = false;
+let busyExport = false;
+/** Toon/verberg de verwerkingsmelding boven de pagina. */
+function updateBusy() {
+  const det = detectQueue.length > 0 || detectRunning > 0;
+  btnStop.hidden = !det;
+  busyBanner.hidden = !(det || busyLoad || busyExport);
+  markScan();
+}
+/** Pagina die nu door de OCR gaat (of in de wachtrij staat) zichtbaar markeren. */
+const scanning = new Set<PageState>();
+function markScan() {
+  const p = page();
+  if (!stage) return;
+  const state = p && scanning.has(p) ? 'bezig' : p?.detect === 'bezig' ? 'wacht' : '';
+  if (!state) {
+    delete stage.dataset.scan;
+    delete stage.dataset.scanmsg;
+    return;
+  }
+  stage.dataset.scan = state;
+  stage.dataset.scanmsg = state === 'bezig' ? 'Tekst op deze pagina wordt herkend…' : 'In de wachtrij voor tekstherkenning…';
 }
 function setProgress(done: number, total: number) {
   progress.hidden = total === 0 || done >= total;
@@ -287,6 +341,8 @@ async function addFiles(files: File[]) {
     curPage = 0;
   }
   renderAll();
+  busyLoad = true;
+  updateBusy();
   let i = 0;
   for (const d of added) {
     setStatus(`Inlezen: ${++i}/${added.length}…`);
@@ -307,6 +363,8 @@ async function addFiles(files: File[]) {
     makeThumbs(d);
   }
   setProgress(0, 0);
+  busyLoad = false;
+  updateBusy();
   setStatus(`${added.length} document(en) ingelezen.`);
   if (S.autoDetect) detectDocs(added.filter((d) => d.status === 'klaar'));
 }
@@ -513,6 +571,7 @@ function enqueue(doc: Doc, pages: PageState[]) {
     detectTotal++;
   }
   pumpDetect();
+  markScan();
   renderDocList();
   renderStrip();
   renderInspector();
@@ -539,14 +598,14 @@ function stopDetect() {
   detectTotal -= detectQueue.length;
   detectQueue.length = 0;
   setStatus("Detectie gestopt (pagina's die al bezig waren worden nog afgemaakt).");
-  btnStop.hidden = true;
+  updateBusy();
   renderDocList();
   renderStrip();
   renderInspector();
 }
 
 function pumpDetect() {
-  btnStop.hidden = !(detectQueue.length || detectRunning);
+  updateBusy();
   const max = S.ocrWorkers > 0 ? S.ocrWorkers : defaultWorkerCount();
   while (detectRunning < max && detectQueue.length) {
     const job = detectQueue.shift()!;
@@ -556,7 +615,7 @@ function pumpDetect() {
       detectDone++;
       const mainLeft = detectQueue.some((j) => j.phase === 'rechtop');
       if (!detectQueue.length && !detectRunning) {
-        btnStop.hidden = true;
+        updateBusy();
         const n = detectDone;
         detectDone = detectTotal = 0;
         setProgress(0, 0);
@@ -614,6 +673,8 @@ async function runDetect(doc: Doc, p: PageState, phase: Phase) {
   if (!doc.src || !docs.includes(doc)) return;
   if (phase === 'gedraaid') {
     if (p.rotChecked || p.boxes.length || p.checked) return;
+    scanning.add(p);
+    markScan();
     try {
       const canvas = await doc.src.render(p.index, S.ocrDpi);
       const res = await detectPage(canvas, S, namesFor(doc), [90, 270, 180]);
@@ -631,6 +692,8 @@ async function runDetect(doc: Doc, p: PageState, phase: Phase) {
     } catch (e) {
       console.error(e);
     }
+    scanning.delete(p);
+    markScan();
     renderDocList();
     if (doc === cur) {
       renderStrip();
@@ -644,6 +707,8 @@ async function runDetect(doc: Doc, p: PageState, phase: Phase) {
     return;
   }
   runningMain++;
+  scanning.add(p);
+  markScan();
   p.detectNote = 'Bezig met tekstherkenning…';
   if (doc === cur && p.index === curPage) renderInspector();
   try {
@@ -665,6 +730,8 @@ async function runDetect(doc: Doc, p: PageState, phase: Phase) {
     console.error(e);
   } finally {
     runningMain--;
+    scanning.delete(p);
+    markScan();
   }
   doc.exported = false;
   renderDocList();
@@ -790,7 +857,7 @@ function renderDocList() {
                 },
               }, '×'),
             ),
-            el('div', { class: 'row' }, el('span', { class: 'orig', title: d.name }, '📄 ' + d.name)),
+            el('div', { class: 'row' }, el('span', { class: 'orig', title: d.name }, d.name)),
             el('div', { class: 'chips' }, ...docChips(d)),
           ),
         )
@@ -859,6 +926,7 @@ async function renderEditor() {
   editor.replaceChildren(stage);
   attachOverlayEvents(overlay);
   renderOverlay();
+  markScan();
 
   const dpr = window.devicePixelRatio || 1;
   const dpi = Math.min(220, Math.max(40, Math.round(((w * dpr) / p.wPt) * 72 / 10) * 10));
@@ -899,7 +967,7 @@ function renderOverlay() {
       const e = el(
         'div',
         { class: `box ${b.kind}${b.id === selBox ? ' sel' : ''}`, 'data-id': b.id, title: b.label ? `Gevonden bij label "${b.label}"` : '' },
-        el('span', { class: 'tag' }, `${KIND_LABEL[b.kind]}${b.text ? ' · tekst' : ''}${originTag(b)}`),
+        el('span', { class: 'tag', title: 'Klik om te selecteren, sleep om te verplaatsen' }, `${KIND_LABEL[b.kind]}${b.text ? ' · tekst' : ''}${originTag(b)}`),
       );
       positionBox(e, b);
       if (b.id === selBox) for (const h of ['nw', 'ne', 'sw', 'se']) e.append(el('div', { class: `handle ${h}`, 'data-h': h }));
@@ -1128,23 +1196,32 @@ function renderToolbar() {
   const n = cur?.pages.length ?? 0;
   const tb = (label: string, title: string, fn: () => void, opts: { disabled?: boolean; active?: boolean } = {}) =>
     el('button', { class: 'btn small' + (opts.active ? ' active' : ''), title, 'aria-label': title, onclick: fn, disabled: opts.disabled ?? !has }, label);
-  toolbar.replaceChildren(
-    tb('◀', 'Vorige pagina (←)', () => gotoPage(curPage - 1), { disabled: !has || curPage === 0 }),
-    el('span', { class: 'info' }, has ? `Pagina ${curPage + 1} / ${n}` : '–'),
-    tb('▶', 'Volgende pagina (→)', () => gotoPage(curPage + 1), { disabled: !has || curPage >= n - 1 }),
-    el('span', { class: 'sep' }),
-    tb('−', 'Uitzoomen (-)', () => setZoom(-1)),
-    tb('Passend', 'Passend maken (0)', () => setZoom(0), { active: zoom === 'fit' }),
-    tb('+', 'Inzoomen (+)', () => setZoom(1)),
-    tb('🎯 Naar vakken', 'Inzoomen op de vakken van deze pagina (Z)', zoomToBoxes, { disabled: !has || !p?.boxes.length }),
-    el('span', { class: 'sep' }),
-    tb(preview ? '👁 Voorbeeld aan' : '👁 Voorbeeld', 'Toon hoe de uitvoer eruit ziet (P)', togglePreview, { active: preview }),
-    tb('🔍 Detecteer', 'Deze pagina opnieuw automatisch detecteren (D)', () => cur && p && enqueue(cur, [p])),
-    tb('⟲', 'Pagina linksom draaien (Shift+R)', () => rotatePage(-1)),
-    tb('⟳', 'Pagina rechtsom draaien (R)', () => rotatePage(1)),
-    tb('🗑', 'Geselecteerd vak verwijderen (Delete)', deleteSelected, { disabled: !selBox }),
-    tb('↶', 'Ongedaan maken (Ctrl+Z)', () => undo(), { disabled: !undoStack.length }),
-    tb('↷', 'Opnieuw (Ctrl+Y)', () => undo(true), { disabled: !redoStack.length }),
+  const item = (label: string, key: string, fn: () => void, disabled = !has) => {
+    const b = mi(label, fn);
+    b.append(el('kbd', {}, key));
+    (b as HTMLButtonElement).disabled = disabled;
+    return b;
+  };
+  keepOpen(toolbar, () =>
+    toolbar.replaceChildren(
+      tb('◀', 'Vorige pagina (←)', () => gotoPage(curPage - 1), { disabled: !has || curPage === 0 }),
+      el('span', { class: 'info' }, has ? `Pagina ${curPage + 1} / ${n}` : '–'),
+      tb('▶', 'Volgende pagina (→)', () => gotoPage(curPage + 1), { disabled: !has || curPage >= n - 1 }),
+      el('span', { class: 'sep' }),
+      tb('−', 'Uitzoomen (-)', () => setZoom(-1)),
+      tb('Passend', 'Passend maken (0)', () => setZoom(0), { active: zoom === 'fit' }),
+      tb('+', 'Inzoomen (+)', () => setZoom(1)),
+      el('span', { class: 'sep' }),
+      tb(preview ? '👁 Voorbeeld aan' : '👁 Voorbeeld', 'Toon hoe de uitvoer eruit ziet (P)', togglePreview, { active: preview }),
+      tb('↶', 'Ongedaan maken (Ctrl+Z)', () => undo(), { disabled: !undoStack.length }),
+      menu('page', '⋯', 'Meer paginaopties', [
+        item('🎯 Zoom naar vakken', 'Z', zoomToBoxes, !has || !p?.boxes.length),
+        item('🔍 Pagina opnieuw detecteren', 'D', () => cur && p && enqueue(cur, [p])),
+        item('⟲ Linksom draaien', '⇧R', () => rotatePage(-1)),
+        item('⟳ Rechtsom draaien', 'R', () => rotatePage(1)),
+        item('↷ Opnieuw', 'Ctrl+Y', () => undo(true), !redoStack.length),
+      ], 'right small'),
+    ),
   );
   toolbar.title = has ? 'Tip: sleep op de pagina om een nieuw vak te tekenen' : '';
 }
@@ -1339,11 +1416,16 @@ function renderInspector() {
       'div',
       { class: 'section' },
       el('h3', {}, 'Dit document'),
-      el('div', { class: 'field' }, el('label', {}, 'Kandidaatnummer'), numInput, numNote),
+      el(
+        'div',
+        { class: 'field' },
+        el('label', {}, 'Kandidaatnummer'),
+        el('div', { class: 'inline' }, numInput, el('button', { class: 'btn small', title: 'Ander willekeurig nummer', 'aria-label': 'Ander willekeurig nummer', onclick: () => { d.num = uniqueNumber(S.numMin, S.numMax, usedNumbers(d)); d.exported = false; renderDocList(); renderInspector(); refreshPreview(); } }, '🎲')),
+        numNote,
+      ),
       el('div', { class: 'note' }, 'Vervangende tekst: ', el('strong', {}, docText(d))),
-      el('div', { class: 'row', style: 'display:flex;gap:6px;margin-top:8px;flex-wrap:wrap' },
-        el('button', { class: 'btn small', onclick: () => { d.num = uniqueNumber(S.numMin, S.numMax, usedNumbers(d)); d.exported = false; renderDocList(); renderInspector(); refreshPreview(); } }, '🎲 Ander nummer'),
-        el('button', { class: 'btn small', onclick: () => exportAll([d]) }, '⬇ Alleen dit document'),
+      more('doc', 'Meer documentacties',
+        el('button', { class: 'btn small', onclick: () => exportAll([d]) }, '⬇ Alleen dit document exporteren'),
         el('button', { class: 'btn small', onclick: () => openSplit(d), disabled: d.pages.length < 2, title: 'Eén scan met meerdere leerlingen opdelen' }, '✂ Splitsen…'),
         el(
           'button',
@@ -1410,31 +1492,25 @@ function renderInspector() {
           { class: p.detect === 'fout' ? 'note err' : 'note' },
           p.detect === 'nog niet' ? 'Nog niet automatisch gecontroleerd.' : p.detectNote ?? '',
         ),
-        el('div', { style: 'display:grid;gap:6px;margin-top:10px' },
+        el(
+          'button',
+          {
+            class: 'btn small' + (p.checked ? ' active' : ''),
+            style: 'margin-top:10px;width:100%',
+            title: 'Markeer deze pagina als gecontroleerd (zet waarschuwingen uit)',
+            onclick: () => {
+              p.checked = !p.checked;
+              renderDocList();
+              renderStrip();
+              renderInspector();
+            },
+          },
+          p.checked ? '✓ Gecontroleerd' : 'Markeer als gecontroleerd',
+        ),
+        more('page', 'Meer pagina-acties',
           el('button', { class: 'btn small', onclick: () => enqueue(d, [p]), disabled: p.detect === 'bezig' }, '🔍 Deze pagina detecteren'),
           el('button', { class: 'btn small', onclick: () => clearPageBoxes(false), disabled: !p.boxes.length }, 'Vakken op deze pagina wissen'),
-          el(
-            'button',
-            {
-              class: 'btn small' + (p.checked ? ' active' : ''),
-              title: 'Markeer deze pagina als gecontroleerd (zet waarschuwingen uit)',
-              onclick: () => {
-                p.checked = !p.checked;
-                renderDocList();
-                renderStrip();
-                renderInspector();
-              },
-            },
-            p.checked ? '✓ Gecontroleerd' : 'Markeer als gecontroleerd',
-          ),
-        ),
-      ),
-      el(
-        'div',
-        { class: 'section' },
-        el('h3', {}, 'Vakken kopiëren'),
-        el('p', { class: 'note', style: 'margin-top:0' }, 'Zelfde formulier op elke pagina of bij elke leerling? Kopieer de vakken van deze pagina.'),
-        el('div', { style: 'display:grid;gap:6px' },
+          el('div', { class: 'note', style: 'margin-top:6px' }, 'Vakken kopiëren – zelfde formulier op elke pagina of bij elke leerling?'),
           el('button', { class: 'btn small', onclick: () => copyBoxes('pages'), disabled: !p.boxes.length }, '→ Alle pagina\'s van dit document'),
           el('button', { class: 'btn small', onclick: () => copyBoxes('docs'), disabled: !p.boxes.length || docs.length < 2 }, `→ Pagina ${curPage + 1} van alle documenten`),
           el('button', { class: 'btn small', onclick: () => copyBoxes('all'), disabled: !p.boxes.length }, '→ Alle pagina\'s van alle documenten'),
@@ -1446,9 +1522,9 @@ function renderInspector() {
   sections.push(
     el('div', { class: 'section' }, el('h3', {}, 'Legenda'), legend()),
     el(
-      'div',
-      { class: 'section' },
-      el('h3', {}, 'Sneltoetsen'),
+      'details',
+      { class: 'section fold', 'data-key': 'keys' },
+      el('summary', {}, el('h3', {}, 'Sneltoetsen')),
       el('dl', { class: 'kv' },
         el('dt', {}, el('kbd', {}, '←'), ' ', el('kbd', {}, '→')), el('dd', {}, 'Pagina'),
         el('dt', {}, el('kbd', {}, 'PgUp'), ' ', el('kbd', {}, 'PgDn')), el('dd', {}, 'Document'),
@@ -1464,7 +1540,12 @@ function renderInspector() {
       ),
     ),
   );
-  inspector.replaceChildren(...sections);
+  keepOpen(inspector, () => inspector.replaceChildren(...sections));
+}
+
+/** Inklapbaar blok met minder vaak gebruikte knoppen. */
+function more(key: string, label: string, ...items: (HTMLElement | null)[]) {
+  return el('details', { class: 'more', 'data-key': key }, el('summary', {}, label), el('div', { class: 'more-list' }, ...items));
 }
 
 function legend() {
@@ -1531,6 +1612,8 @@ Toch exporteren? (Tip: gebruik eerst het controle-overzicht.)`,
   const taken = new Set<string>();
   const totalPages = todo.reduce((a, d) => a + d.pages.length, 0);
   let done = 0;
+  busyExport = true;
+  updateBusy();
   for (const d of todo) {
     setStatus(`Exporteren: ${docText(d)}…`);
     try {
@@ -1545,6 +1628,8 @@ Toch exporteren? (Tip: gebruik eerst het controle-overzicht.)`,
     }
   }
   setProgress(0, 0);
+  busyExport = false;
+  updateBusy();
   setStatus(`${results.length} document(en) geëxporteerd en gecontroleerd.`);
   lastExport = results;
   renderDocList();
@@ -1915,7 +2000,7 @@ function openSettings() {
     dlg.close();
     renderAll();
     const newKw = [S.kwNaam, S.kwNummer, S.kwKlas, S.kwStop, S.detectKlas, S.detectNummer, S.searchRotated, S.padding, S.ocrDpi].join('|');
-    if ((oldKw !== newKw || namesChanged) && docs.length) toast('Detectie-instellingen gewijzigd. Klik "Detecteer alles opnieuw" om ze toe te passen.');
+    if ((oldKw !== newKw || namesChanged) && docs.length) toast('Detectie-instellingen gewijzigd. Kies ☰ Menu → "Alles opnieuw detecteren" om ze toe te passen.');
   };
 
   dlg.append(
@@ -2021,12 +2106,12 @@ function openHelp(section?: string) {
         el('li', {}, 'Sleep een vak om het te verplaatsen; gebruik de hoekjes om het groter of kleiner te maken.'),
         el('li', {}, 'Dubbelklik op een vak om daar de vervangende tekst ("Kandidaat 67") te plaatsen.'),
         el('li', {}, 'Houd Shift ingedrukt tijdens het slepen voor een strook over de volle breedte; verschuif een geselecteerd vak met de pijltjestoetsen.'),
-        el('li', {}, 'Scheef of ondersteboven gescand? Draai de pagina met ⟲/⟳ (of R); de vakken draaien mee.'),
+        el('li', {}, 'Scheef of ondersteboven gescand? Draai de pagina via ⋯ boven de pagina (of toets R); de vakken draaien mee.'),
         el('li', {}, 'Staat het naamvak bij iedereen op dezelfde plek? Teken het één keer en gebruik "Vakken kopiëren".'),
         el('li', {}, 'Gebruik je vaker hetzelfde antwoordblad? Sla de vakken op als 📐 sjabloon.'),
       ),
       el('h3', {}, '🧑‍🎓 Namenlijst'),
-      el('p', {}, 'In Instellingen kun je een lijst met namen plakken (bijv. de hele klas). Die namen worden op elke pagina gezocht, ook buiten de naamvakken. De lijst wordt niet opgeslagen.'),
+      el('p', {}, 'In ☰ Menu → Instellingen kun je een lijst met namen plakken (bijv. de hele klas). Die namen worden op elke pagina gezocht, ook buiten de naamvakken. De lijst wordt niet opgeslagen.'),
       el('h3', {}, '🗝 Sleutelbestand'),
       el('p', {}, 'Wil je later terugvinden wie "Kandidaat 67" was, download dan het sleutelbestand (CSV). Daarin staat welk nummer bij welk origineel bestand hoort. Bewaar dit bestand apart en veilig.'),
       el('h3', {}, '💡 Tips'),
@@ -2034,7 +2119,7 @@ function openHelp(section?: string) {
         el('li', {}, 'Verwerk een hele klas tegelijk: sleep alle PDF\'s in één keer naar het venster.'),
         el('li', {}, `Hele stapel in één PDF gescand? Gebruik "✂ Splitsen…" bij het document om per leerling op te delen.`),
         el('li', {}, 'Ook losse scans als JPG of PNG worden ondersteund.'),
-        el('li', {}, 'Bestanden te groot? Kies in Instellingen een lagere resolutie of grijswaarden.'),
+        el('li', {}, 'Bestanden te groot? Kies in ☰ Menu → Instellingen een lagere resolutie of grijswaarden.'),
       ),
     ),
     el('div', { class: 'dfoot' }, el('button', { class: 'btn primary', onclick: () => dlg.close() }, 'Sluiten')),
@@ -2057,8 +2142,7 @@ function applyTheme() {
   }
   if (t === 'auto') delete document.documentElement.dataset.theme;
   else document.documentElement.dataset.theme = t;
-  themeBtn.textContent = t === 'dark' ? '🌙' : t === 'light' ? '☀' : '🌓';
-  themeBtn.title = `Thema: ${t === 'auto' ? 'automatisch' : t === 'dark' ? 'donker' : 'licht'}`;
+  themeBtn.textContent = `${t === 'dark' ? '🌙' : t === 'light' ? '☀' : '🌓'} Thema: ${t === 'auto' ? 'automatisch' : t === 'dark' ? 'donker' : 'licht'}`;
 }
 function cycleTheme() {
   let t = 'auto';
@@ -2076,6 +2160,11 @@ window.addEventListener('keydown', (e) => {
   const t = e.target as HTMLElement;
   if (t.closest('input, textarea, select, dialog')) return;
   const p = page();
+  const openMenu = document.querySelector<HTMLDetailsElement>('details.menu[open]');
+  if (e.key === 'Escape' && openMenu) {
+    openMenu.open = false;
+    return;
+  }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
     e.preventDefault();
     undo(e.shiftKey);
