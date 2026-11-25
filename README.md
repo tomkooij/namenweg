@@ -70,8 +70,8 @@ pagina, en geen namen of de oorspronkelijke bestandsnaam in de metadata (Info en
   niet allemaal evenveel pagina's (bijv. 4, 6 of 8), dan wordt gesplitst bij elk blad dat
   gelijk is aan pagina 1 (het voorblad); een slecht gelezen voorblad wordt afgeleid uit het
   blad erna. Is de verdeling ongelijk of twijfelt de app, dan opent het venster
-  "Splitsresultaat" (één rij per kandidaat, klik op ✂ om te splitsen of voeg een rij samen met
-  de vorige); bij een gelijke verdeling niet, maar dan staat er "Bekijken" in de melding en
+  "Splitsresultaat" (schermvullend, één rij per kandidaat; pagina's groot bekijken, naar een
+  andere kandidaat slepen, splitsen met ✂ of een rij samenvoegen met de vorige); bij een gelijke verdeling niet, maar dan staat er "Bekijken" in de melding en
   "✂ Splitsing bekijken/aanpassen…" bij het document. Terug te draaien via de melding, uit te
   zetten in Instellingen. Het oogje bij "Dit document" laat
   zien wat de tekstherkenning per pagina zag en hoe de splitsheuristiek besliste. Handmatig
