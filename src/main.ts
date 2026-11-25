@@ -635,7 +635,8 @@ function openSplitReview(list: Doc[], initial?: number[], onDone?: () => void) {
       const [img, i] = want.entries().next().value as [HTMLImageElement, number];
       want.delete(img);
       if (!img.isConnected) continue;
-      const dpi = tierFor(size, i);
+      // Hoogte waarop deze afbeelding getoond wordt (ingezoomde rij is groter).
+      const dpi = tierFor(Number(img.dataset.h) || size, i);
       if (img.dataset.dpi && Number(img.dataset.dpi) >= dpi) continue;
       const url = await imageFor(i, dpi);
       if (url && img.isConnected) {
@@ -690,12 +691,29 @@ function openSplitReview(list: Doc[], initial?: number[], onDone?: () => void) {
     render();
   }
 
-  function render() {
+  /** Ingezoomde kandidaat (rij index), of null. */
+  let focusK: number | null = null;
+  /** Hoogte van de andere rijen tijdens inzoomen: klein, maar nog herkenbaar. */
+  const SMALL = 120;
+  /** Zo hoog mogelijk, maar met ruimte voor de kandidaat erboven en eronder. */
+  function focusHeight() {
+    const body = dlg.querySelector('.dbody') as HTMLElement | null;
+    const h = body?.clientHeight || window.innerHeight;
+    return Math.max(260, Math.round(h - 2 * (SMALL + 64) - 120));
+  }
+  const label = (k: number) => (k < nums.length ? fillTemplate(S.template, nums[k]) : 'Nieuwe kandidaat');
+
+  function render(scrollTo?: { k: number; page?: number }) {
     io.disconnect();
     want.clear();
-    dlg.style.setProperty('--sr-h', `${size}px`);
     const b = groupBounds();
     const lengths = b.slice(1).map((x, k) => x - b[k]);
+    if (focusK !== null && focusK >= lengths.length) focusK = lengths.length - 1;
+    const zoomed = focusK !== null;
+    const bigH = zoomed ? focusHeight() : 0;
+    dlg.classList.toggle('zoomed', zoomed);
+    dlg.style.setProperty('--sr-h', `${zoomed ? SMALL : size}px`);
+    dlg.style.setProperty('--sr-zh', `${bigH}px`);
     const uneven = new Set(lengths).size > 1;
     summary.replaceChildren(
       el('strong', {}, `${lengths.length} ${lengths.length === 1 ? 'kandidaat' : 'kandidaten'}`),
@@ -705,7 +723,7 @@ function openSplitReview(list: Doc[], initial?: number[], onDone?: () => void) {
     rowsEl.replaceChildren(
       ...lengths.map((len, k) => {
         const first = b[k];
-        const num = k < nums.length ? nums[k] : null;
+        const isF = k === focusK;
         // Voorblad midden in de rij: daar begint waarschijnlijk een andere leerling.
         const innerVb = Array.from({ length: len - 1 }, (_, j) => first + 1 + j).filter(voorblad);
         const warnRow = (k > 0 && !voorblad(first)) || innerVb.length > 0;
@@ -714,7 +732,7 @@ function openSplitReview(list: Doc[], initial?: number[], onDone?: () => void) {
           if (i > first)
             items.push(el('button', { class: 'sr-cut', title: `Hier splitsen: pagina ${i + 1} wordt het begin van een nieuwe kandidaat`, 'aria-label': `Splitsen vóór pagina ${i + 1}`, onclick: () => toggle(i) }, '✂'));
           const p = pages[i];
-          const img = el('img', { src: p.thumb ?? '', alt: `Pagina ${i + 1}`, draggable: 'false', 'data-i': String(i) }) as HTMLImageElement;
+          const img = el('img', { src: p.thumb ?? '', alt: `Pagina ${i + 1}`, draggable: 'false', 'data-i': String(i), 'data-h': String(isF ? bigH : zoomed ? SMALL : size) }) as HTMLImageElement;
           img.style.aspectRatio = `${p.wPt} / ${p.hPt}`;
           io.observe(img);
           items.push(
@@ -723,7 +741,7 @@ function openSplitReview(list: Doc[], initial?: number[], onDone?: () => void) {
               {
                 class: 'sr-page' + (voorblad(i) || i === 0 ? ' vb' : ''),
                 'data-i': String(i),
-                title: `Pagina ${i + 1}${naam(i) ? ' · naamvak' : ''}${voorblad(i) ? ' · zelfde blad als pagina 1' : ''}\nKlik: groot bekijken · sleep naar een andere kandidaat`,
+                title: `Pagina ${i + 1}${naam(i) ? ' · naamvak' : ''}${voorblad(i) ? ' · zelfde blad als pagina 1' : ''}\n${isF ? 'Klik: uitzoomen' : 'Klik: inzoomen op deze kandidaat'} · sleep naar een andere kandidaat`,
               },
               img,
               el('span', { class: 'n' }, String(i + 1)),
@@ -731,22 +749,44 @@ function openSplitReview(list: Doc[], initial?: number[], onDone?: () => void) {
             ),
           );
         }
+        const pagesTxt = `${len} pagina${len === 1 ? '' : "'s"} (p. ${len === 1 ? first + 1 : `${first + 1}–${first + len}`})`;
         return el(
           'div',
-          { class: 'sr-row' + (warnRow ? ' odd' : ''), 'data-k': String(k) },
+          { class: `sr-row c${k % 6}` + (warnRow ? ' odd' : '') + (isF ? ' focus' : ''), 'data-k': String(k) },
           el(
             'div',
             { class: 'sr-head' },
-            el('strong', {}, num !== null ? fillTemplate(S.template, num) : 'Nieuwe kandidaat'),
-            ` · ${len} p. (pagina ${len === 1 ? first + 1 : `${first + 1}–${first + len}`})`,
-            k > 0 && !voorblad(first) ? el('span', { class: 'note warn' }, ' · begint niet met een voorblad') : null,
-            innerVb.length ? el('span', { class: 'note warn' }, ` · bevat nog een voorblad (p. ${innerVb.map((i) => i + 1).join(', ')})`) : null,
+            el('span', { class: 'sr-label' }, label(k)),
+            isF ? el('span', { class: 'sr-of' }, `kandidaat ${k + 1} van ${lengths.length}`) : null,
+            el('span', {}, pagesTxt),
+            k > 0 && !voorblad(first) ? el('span', { class: 'note warn' }, '· begint niet met een voorblad') : null,
+            innerVb.length ? el('span', { class: 'note warn' }, `· bevat nog een voorblad (p. ${innerVb.map((i) => i + 1).join(', ')})`) : null,
+            el('span', { class: 'spacer' }),
+            isF
+              ? el('span', { class: 'inline' },
+                  el('button', { class: 'btn small', disabled: k === 0, onclick: () => zoomTo(k - 1), title: 'Vorige kandidaat (↑)' }, '↑'),
+                  el('button', { class: 'btn small', disabled: k === lengths.length - 1, onclick: () => zoomTo(k + 1), title: 'Volgende kandidaat (↓)' }, '↓'),
+                  el('button', { class: 'btn small', onclick: () => zoomTo(null, first), title: 'Uitzoomen (Esc)' }, '⤡ Uitzoomen'))
+              : el('button', { class: 'btn small', onclick: () => zoomTo(k), title: 'Op deze kandidaat inzoomen' }, '🔍 Inzoomen'),
             k > 0 ? el('button', { class: 'btn small', onclick: () => toggle(first), title: 'Deze rij bij de vorige kandidaat voegen' }, '↥ Samenvoegen met vorige') : null,
           ),
           el('div', { class: 'sr-strip' }, ...items),
         );
       }),
     );
+    // Ingezoomde rij in het midden, zodat de kandidaat erboven en eronder ook zichtbaar is.
+    const target = scrollTo ?? (focusK !== null ? { k: focusK } : null);
+    if (target)
+      requestAnimationFrame(() => {
+        const row = rowsEl.querySelector(`.sr-row[data-k="${target.k}"]`) as HTMLElement | null;
+        row?.scrollIntoView({ block: 'center' });
+        if (target.page !== undefined) rowsEl.querySelector(`.sr-page[data-i="${target.page}"]`)?.scrollIntoView({ block: 'nearest', inline: 'center' });
+      });
+  }
+  function zoomTo(k: number | null, page?: number) {
+    const prev = focusK;
+    focusK = k;
+    render({ k: k ?? prev ?? 0, page });
   }
 
   // ── Slepen: pagina naar een andere rij ──
@@ -788,7 +828,11 @@ function openSplitReview(list: Doc[], initial?: number[], onDone?: () => void) {
     d.over?.classList.remove('drop');
     dlg.classList.remove('dragging');
     if (!d.ghost) {
-      if (e.type === 'pointerup') openViewer(d.i); // gewone klik: groot bekijken
+      // Gewone klik: inzoomen op deze kandidaat (of uitzoomen als die al ingezoomd is).
+      if (e.type === 'pointerup') {
+        const k = groupOf(d.i);
+        zoomTo(focusK === k ? null : k, d.i);
+      }
       return;
     }
     if (d.over && e.type === 'pointerup') movePage(d.i, Number(d.over.dataset.k));
@@ -796,57 +840,29 @@ function openSplitReview(list: Doc[], initial?: number[], onDone?: () => void) {
   rowsEl.addEventListener('pointerup', endDrag);
   rowsEl.addEventListener('pointercancel', endDrag);
 
-  // ── Grote weergave ──
-  let viewer: HTMLElement | null = null;
-  let viewing = -1;
-  async function openViewer(i: number) {
-    viewer?.remove();
-    viewing = i;
-    const k = groupOf(i);
-    const img = el('img', { src: imgCache.get(`${i}:110`) ?? pages[i].thumb ?? '', alt: `Pagina ${i + 1}` }) as HTMLImageElement;
-    img.style.aspectRatio = `${pages[i].wPt} / ${pages[i].hPt}`;
-    const isStart = starts.has(i);
-    viewer = el(
-      'div',
-      { class: 'sr-viewer', role: 'dialog', 'aria-label': `Pagina ${i + 1}` },
-      el(
-        'div',
-        { class: 'sr-vbar' },
-        el('button', { class: 'btn small', disabled: i === 0, onclick: () => openViewer(i - 1), title: 'Vorige pagina (←)' }, '◀'),
-        el('strong', {}, `Pagina ${i + 1} / ${n}`),
-        el('button', { class: 'btn small', disabled: i === n - 1, onclick: () => openViewer(i + 1), title: 'Volgende pagina (→)' }, '▶'),
-        el('span', { class: 'note' }, ` · ${k < nums.length ? fillTemplate(S.template, nums[k]) : 'nieuwe kandidaat'}${naam(i) ? ' · naamvak' : ''}${voorblad(i) || i === 0 ? ' · voorblad' : ''}`),
-        el('span', { class: 'spacer' }),
-        i > 0
-          ? el('button', { class: 'btn small' + (isStart ? ' active' : ''), onclick: () => { toggle(i); openViewer(i); } }, isStart ? '✓ Hier begint een nieuwe kandidaat' : '✂ Hier begint een nieuwe kandidaat')
-          : null,
-        el('button', { class: 'btn small', onclick: closeViewer, title: 'Sluiten (Esc)' }, '✕'),
-      ),
-      el('div', { class: 'sr-vimg', onclick: (e: Event) => e.target === e.currentTarget && closeViewer() }, img),
-    );
-    dlg.append(viewer);
-    const url = await imageFor(i, 110);
-    if (url && img.isConnected) img.src = url;
-  }
-  function closeViewer() {
-    viewer?.remove();
-    viewer = null;
-    viewing = -1;
-  }
+  // ── Toetsen tijdens inzoomen: ↑↓ andere kandidaat, ←→ door de pagina's, Esc uitzoomen ──
   dlg.addEventListener('keydown', (e) => {
-    if (!viewer) return;
-    if (e.key === 'ArrowRight' && viewing < n - 1) openViewer(viewing + 1);
-    else if (e.key === 'ArrowLeft' && viewing > 0) openViewer(viewing - 1);
+    if (focusK === null || (e.target as HTMLElement).closest('input, select, textarea')) return;
+    const last = groupBounds().length - 2;
+    const strip = rowsEl.querySelector('.sr-row.focus .sr-strip') as HTMLElement | null;
+    const step = (strip?.querySelector('.sr-page') as HTMLElement | null)?.offsetWidth ?? 300;
+    if (e.key === 'ArrowDown' && focusK < last) zoomTo(focusK + 1);
+    else if (e.key === 'ArrowUp' && focusK > 0) zoomTo(focusK - 1);
+    else if (e.key === 'ArrowRight') strip?.scrollBy({ left: step + 22, behavior: 'smooth' });
+    else if (e.key === 'ArrowLeft') strip?.scrollBy({ left: -(step + 22), behavior: 'smooth' });
     else return;
     e.preventDefault();
   });
-  // Esc sluit eerst de grote weergave, niet het hele venster.
+  // Esc zoomt eerst uit, en sluit pas daarna het venster.
   dlg.addEventListener('cancel', (e) => {
-    if (viewer) {
+    if (focusK !== null) {
       e.preventDefault();
-      closeViewer();
+      zoomTo(null);
     }
   });
+  // Ander schermformaat: ingezoomde rij opnieuw passend maken.
+  const onResize = () => focusK !== null && render();
+  window.addEventListener('resize', onResize);
 
   sizeIn.addEventListener('input', () => {
     size = Number(sizeIn.value);
@@ -882,7 +898,7 @@ function openSplitReview(list: Doc[], initial?: number[], onDone?: () => void) {
       el(
         'p',
         { class: 'note', style: 'margin-top:0' },
-        `${n} pagina's. Elke rij is één kandidaat met een eigen nummer. Klik op een pagina om hem groot te bekijken, sleep een pagina naar een andere kandidaat, of klik op ✂ tussen twee pagina's om daar te splitsen. Blauwe rand = hetzelfde blad als pagina 1 (voorblad).`,
+        `${n} pagina's. Elke rij is één kandidaat met een eigen nummer. Klik op een pagina om in te zoomen op die kandidaat (↑ ↓ andere kandidaat, ← → bladeren, Esc uitzoomen), sleep een pagina naar een andere kandidaat, of klik op ✂ tussen twee pagina's om daar te splitsen. Blauwe rand = hetzelfde blad als pagina 1 (voorblad).`,
       ),
       el(
         'div',
@@ -911,6 +927,7 @@ function openSplitReview(list: Doc[], initial?: number[], onDone?: () => void) {
   document.body.append(dlg);
   dlg.addEventListener('close', () => {
     alive = false;
+    window.removeEventListener('resize', onResize);
     io.disconnect();
     imgCache.clear();
     dlg.remove();
@@ -2706,7 +2723,7 @@ function openHelp(section?: string) {
       el('h3', {}, '💡 Tips'),
       el('ul', {},
         el('li', {}, 'Verwerk een hele klas tegelijk: sleep alle PDF\'s in één keer naar het venster.'),
-        el('li', {}, `Hele stapel in één PDF gescand? Staan de naamvakken op een vast ritme (bijv. elke 2e pagina) en zijn dat steeds hetzelfde voorblad, dan deelt de app de scan na de detectie automatisch per leerling op, met voor elke leerling een eigen nummer. Heeft niet elke leerling evenveel pagina's, of twijfelt de app, dan opent het (schermvullende) venster "Splitsresultaat": één rij per kandidaat. Klik op een pagina om hem groot te bekijken, sleep een pagina naar een andere kandidaat, klik op ✂ tussen twee pagina's om te splitsen of op "Samenvoegen met vorige". Met de schuifregelaar maak je de pagina's groter. Later aanpassen kan via "✂ Splitsing bekijken/aanpassen…" onder "Meer documentacties". Wil je toch één PDF? Kies na het exporteren "Eén samengevoegde PDF".`),
+        el('li', {}, `Hele stapel in één PDF gescand? Staan de naamvakken op een vast ritme (bijv. elke 2e pagina) en zijn dat steeds hetzelfde voorblad, dan deelt de app de scan na de detectie automatisch per leerling op, met voor elke leerling een eigen nummer. Heeft niet elke leerling evenveel pagina's, of twijfelt de app, dan opent het (schermvullende) venster "Splitsresultaat": één rij per kandidaat. Elke kandidaat heeft een eigen kleur. Klik op een pagina om op die kandidaat in te zoomen (de kandidaat erboven en eronder blijft zichtbaar; ↑ ↓ naar een andere kandidaat, ← → bladeren, Esc uitzoomen). Sleep een pagina naar een andere kandidaat, klik op ✂ tussen twee pagina's om te splitsen of op "Samenvoegen met vorige". Met de schuifregelaar maak je de pagina's groter. Later aanpassen kan via "✂ Splitsing bekijken/aanpassen…" onder "Meer documentacties". Wil je toch één PDF? Kies na het exporteren "Eén samengevoegde PDF".`),
         el('li', {}, 'Ook losse scans als JPG of PNG worden ondersteund.'),
         el('li', {}, 'Bestanden te groot? Kies in ☰ Menu → Instellingen een lagere resolutie of grijswaarden.'),
       ),
