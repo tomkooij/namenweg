@@ -82,3 +82,22 @@ describe('kopstrook', () => {
     expect(kopStrip({ x: 0.2, y: 0.5, w: 0.2, h: 0.02 }, A4.W, A4.H)).toBeUndefined();
   });
 });
+
+describe('invulblok herkennen aan de labels', () => {
+  const w = (text: string, x: number, y: number, conf = 95): OcrWord => ({ text, conf, x0: x, y0: y, x1: x + 80, y1: y + 25, line: 1 });
+  it('Naam + Vak/Datum/Klas bovenaan: strook tot onder het laagste label', async () => {
+    const { headerBlockStrip } = await import('../../src/detect-core');
+    const r = headerBlockStrip([w('Naam:', 820, 100), w('Vak:', 820, 160), w('Datum:', 820, 220), w('Klas:', 1250, 220), w('Opgave', 200, 600)], 1654, 2339)!;
+    expect(r).toEqual({ x0: 0, y0: 0, x1: 1654, y1: 245 + 75 });
+  });
+  it('niet bij alleen "Naam", of lager op de pagina, of bij lage zekerheid', async () => {
+    const { headerBlockStrip } = await import('../../src/detect-core');
+    expect(headerBlockStrip([w('Naam:', 820, 100)], 1654, 2339)).toBeUndefined();
+    expect(headerBlockStrip([w('Naam:', 820, 1000), w('Klas:', 1250, 1000)], 1654, 2339)).toBeUndefined();
+    expect(headerBlockStrip([w('Naam:', 820, 100, 40), w('Klas:', 1250, 100)], 1654, 2339)).toBeUndefined();
+  });
+  it('kladpapier: "Naam kandidaat" en "Examen no."', async () => {
+    const { headerBlockStrip } = await import('../../src/detect-core');
+    expect(headerBlockStrip([w('Naam', 100, 100), w('kandidaat:', 190, 100), w('Examen', 100, 170), w('no.', 190, 170)], 1654, 2339)).toBeDefined();
+  });
+});

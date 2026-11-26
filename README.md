@@ -11,8 +11,13 @@ een analyse of gebruiken als voorbeeld, dan moeten die gegevens eruit. NamenWeg 
 
 1. Sleep een of meer PDF's (of JPG/PNG-scans) in de app – of klik op **🧪 Probeer met voorbeeld**
    voor drie neptoetsen met verzonnen namen.
-2. De app zoekt **automatisch** naar voorgedrukte labels zoals *Naam kandidaat*, *Examen no.*,
-   *Kandidaatnummer*, *Leerlingnummer* en *Klas*, en markeert de ingevulde vakken.
+2. De app detecteert **automatisch**. Bovenin kies je de strategie:
+   - **🏫 Schoollogo** (standaard): alleen het schoollogo zoeken (kopwoord, bijv. *Coornhert*) en
+     daar de hele bovenkant van de pagina weghalen – het invulblok van het antwoordblad en het
+     kladpapier. Verder niets: snel en voorspelbaar.
+   - **🔍 Volledig**: alles hieronder – voorgedrukte labels zoals *Naam kandidaat*, *Examen no.*,
+     *Leerlingnummer* en *Klas*, geprinte markeringen, het logo, namen uit de bestandsnaam,
+     aanvullen op basis van andere pagina's en gedraaide pagina's.
 3. Controleer per pagina, pas vakken aan of teken er zelf een.
 4. Exporteer: de persoonsgegevens worden **écht verwijderd** en vervangen door bijvoorbeeld
    *Kandidaat 67*.

@@ -10,7 +10,7 @@ import type { Box, Rot, Settings } from './types';
 import { recognize, type OcrWord } from './ocr';
 import { rotateCanvas } from './pdfio';
 import { uid } from './util';
-import { type DetectResult, findKop, findMarkerSquares, findNameWords, findLabels, kopStrip, kopWords, markerFields, InkMask, mergeBoxes, norm, parsePhrases, printedAnchors, printedWords, regionsFor, unrotate } from './detect-core';
+import { type DetectResult, findKop, findMarkerSquares, findNameWords, findLabels, headerBlockStrip, kopStrip, kopWords, markerFields, InkMask, mergeBoxes, norm, parsePhrases, printedAnchors, printedWords, regionsFor, unrotate } from './detect-core';
 
 export { norm };
 export type { DetectResult };
@@ -77,10 +77,72 @@ export function enhanceForOcr(src: HTMLCanvasElement, dpi: number): HTMLCanvasEl
 
 
 /**
- * Detectie van één pagina: geprinte markeringen (vorm, zonder OCR) en labels (OCR). Een vak
- * tussen markeringen is exact; vakken van labels die erbinnen vallen, vervallen.
+ * Het logo zoeken: een snelle OCR-ronde op alleen de bovenste kwart van de pagina, onbewerkt
+ * (de voorbewerking laat de lichtgrijze logotekst op ruitjes- of lijntjespapier verdwijnen).
+ * Geeft het kopwoord (genormaliseerd t.o.v. de hele pagina) en de gelezen woorden.
+ */
+async function readTop(canvas: HTMLCanvasElement, settings: Settings) {
+  const W = canvas.width;
+  const H = canvas.height;
+  const top = document.createElement('canvas');
+  top.width = W;
+  top.height = Math.round(H * 0.25);
+  top.getContext('2d')!.drawImage(canvas, 0, 0);
+  const words = await recognize(top);
+  const f = top.height / H;
+  // Invulblok herkend aan de labels (Naam + Vak/Datum/Klas/...), voor als het logo niet gelezen wordt.
+  const block = headerBlockStrip(words, W, H);
+  const k = findKop(words, kopWords(settings), W, top.height);
+  top.width = top.height = 0;
+  const kop = k ? { x: k.x, y: k.y * f, w: k.w, h: k.h * f } : undefined;
+  return { kop, words, block };
+}
+
+/** Kopstrook als vak (vervangende tekst erin). */
+function stripBox(kop: NonNullable<DetectResult['kop']>, W: number, H: number, boxes: Box[] = []): Box | null {
+  const r = kopStrip(kop, W, H, boxes);
+  if (!r) return null;
+  return { id: uid(), x: r.x0 / W, y: r.y0 / H, w: (r.x1 - r.x0) / W, h: (r.y1 - r.y0) / H, kind: 'naam', source: 'auto', rot: 0, text: true, label: 'kopstrook', ax: r.x0 / W, ay: r.y0 / H };
+}
+
+/**
+ * Strategie "Logo-blokken": alleen het schoollogo zoeken en dan de hele bovenkant weghalen.
+ * Geen labels, geen namen zoeken, niet gedraaid zoeken: snel en voorspelbaar.
+ */
+async function detectLogoOnly(canvas: HTMLCanvasElement, settings: Settings, only?: Rot[]): Promise<DetectResult> {
+  const W = canvas.width;
+  const H = canvas.height;
+  if (only && !only.includes(0)) return { upright: true, boxes: [], rotation: 0, labels: [], note: 'Geen logo gevonden' };
+  const { kop, words, block } = await readTop(canvas, settings);
+  // Vingerafdruk van de kop (voor het splitsen van een hele klas): woorden in de bovenste kwart.
+  const f = Math.round(H * 0.25) / H;
+  const printedPos = printedAnchors(words, W, Math.round(H * 0.25)).map((p) => ({ ...p, y: p.y * f }));
+  let strip = kop ? stripBox(kop, W, H) : null;
+  // Geen logo gelezen, wel het invulblok herkend aan de labels: dan die strook.
+  const viaBlock = !strip && !!block;
+  if (!strip && block)
+    strip = { id: uid(), x: block.x0 / W, y: 0, w: (block.x1 - block.x0) / W, h: block.y1 / H, kind: 'naam', source: 'auto', rot: 0, text: true, label: 'kopstrook', ax: block.x0 / W, ay: 0 };
+  // Beide gevonden: de grootste strook (het invulblok kan lager doorlopen dan het logo).
+  else if (strip && block && block.y1 / H > strip.y + strip.h) strip.h = block.y1 / H;
+  return {
+    upright: true,
+    printed: printedWords(words),
+    printedPos,
+    kop,
+    boxes: strip ? [strip] : [],
+    rotation: 0,
+    labels: strip ? ['logo'] : [],
+    note: strip ? (viaBlock ? 'Invulblok gevonden (Naam, Vak/Datum/Klas): bovenkant weg' : 'Logo gevonden: bovenkant weg') : kop ? 'Logo gevonden, maar niet bovenaan: niets weggehaald' : 'Geen logo of invulblok gevonden',
+  };
+}
+
+/**
+ * Detectie van één pagina. Strategie "logo": alleen de kopstrook bij het schoollogo. Strategie
+ * "volledig": geprinte markeringen (vorm, zonder OCR), het logo en labels (OCR). Een vak tussen
+ * markeringen of in de kopstrook is exact; vakken van labels die erbinnen vallen, vervallen.
  */
 export async function detectPage(canvas: HTMLCanvasElement, settings: Settings, names: string[] = [], only?: Rot[]): Promise<DetectResult> {
+  if (settings.strategy === 'logo') return detectLogoOnly(canvas, settings, only);
   const W = canvas.width;
   const H = canvas.height;
   let marks: Box[] = [];
@@ -112,39 +174,14 @@ export async function detectPage(canvas: HTMLCanvasElement, settings: Settings, 
         } as Box;
       });
   }
-  // Eerst het logo: een snelle OCR-ronde op alleen de bovenste kwart van de pagina, onbewerkt
-  // (de voorbewerking laat de lichtgrijze logotekst op ruitjes- of lijntjespapier verdwijnen).
+  // Eerst het logo (alleen in de rechtop-ronde, niet in de achtergrondronde voor gedraaide pagina's).
   let kop: DetectResult['kop'];
-  const kw = kopWords(settings);
-  // Alleen in de rechtop-ronde (niet in de achtergrondronde voor gedraaide pagina's).
-  if (kw.length && (!only || only.includes(0))) {
-    const top = document.createElement('canvas');
-    top.width = W;
-    top.height = Math.round(H * 0.25);
-    top.getContext('2d')!.drawImage(canvas, 0, 0);
-    const k = findKop(await recognize(top), kw, W, top.height);
-    top.width = top.height = 0;
-    if (k) kop = { x: k.x, y: (k.y * Math.round(H * 0.25)) / H, w: k.w, h: (k.h * Math.round(H * 0.25)) / H };
-  }
+  if (kopWords(settings).length && (!only || only.includes(0))) kop = (await readTop(canvas, settings)).kop;
   const res0 = await detectLabels(canvas, settings, names, only, marks.length > 0 || !!kop);
   const res = { ...res0, kop: kop ?? res0.kop };
   if (settings.kopStrook && res.kop) {
-    const r = kopStrip(res.kop, W, H, res.boxes);
-    if (r)
-      marks.unshift({
-        id: uid(),
-        x: r.x0 / W,
-        y: r.y0 / H,
-        w: (r.x1 - r.x0) / W,
-        h: (r.y1 - r.y0) / H,
-        kind: 'naam',
-        source: 'auto',
-        rot: 0,
-        text: true,
-        label: 'kopstrook',
-        ax: r.x0 / W,
-        ay: r.y0 / H,
-      } as Box);
+    const strip = stripBox(res.kop, W, H, res.boxes);
+    if (strip) marks.unshift(strip);
     marks.forEach((m, i) => (m.text = i === 0));
   }
   if (!marks.length) return res;

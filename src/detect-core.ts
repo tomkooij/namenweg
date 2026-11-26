@@ -1211,3 +1211,26 @@ export function kopStrip(kop: { x: number; y: number; w: number; h: number }, W:
   y1 = Math.min(H, y1 + 0.005 * H);
   return { x0, y0: 0, x1, y1 };
 }
+
+const KOPBLOK_NAAM = new Set(['naam', 'kandidaat', 'naamkandidaat']);
+const KOPBLOK_ANDER = new Set(['vak', 'datum', 'klas', 'cijfer', 'examen', 'examenno', 'examennr', 'examenvak', 'leerlingnummer', 'kandidaatnummer']);
+
+/**
+ * Invulblok van het antwoordblad of kladpapier herkennen aan de labels zelf (voor als het logo
+ * niet gelezen wordt): in de bovenkant minstens een naamlabel en nog een ander label (Vak,
+ * Datum, Klas, Cijfer, Examen no.). Geeft de strook van de bovenrand tot drie regelhoogtes onder
+ * het laagste label, over de volle breedte (bij een liggende pagina de helft met de labels).
+ * `words` in pixels van de hele pagina; alleen woorden in de bovenste 25% tellen.
+ */
+export function headerBlockStrip(words: OcrWord[], W: number, H: number): PxRect | undefined {
+  const hits = words.filter((w) => w.conf >= 60 && w.y1 < 0.25 * H).map((w) => ({ w, t: norm(w.text) }));
+  const naam = hits.filter((h) => KOPBLOK_NAAM.has(h.t));
+  const ander = hits.filter((h) => KOPBLOK_ANDER.has(h.t));
+  if (!naam.length || !ander.length) return undefined;
+  const block = [...naam, ...ander].map((h) => h.w);
+  const lineH = [...block.map((w) => w.y1 - w.y0)].sort((a, b) => a - b)[Math.floor((block.length - 1) / 2)];
+  const y1 = Math.min(H, Math.max(...block.map((w) => w.y1)) + 3 * lineH);
+  const cx = block.reduce((a, w) => a + (w.x0 + w.x1) / 2, 0) / block.length;
+  const landscape = W > H;
+  return { x0: landscape && cx > W / 2 ? W / 2 : 0, y0: 0, x1: landscape && cx <= W / 2 ? W / 2 : W, y1 };
+}

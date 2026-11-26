@@ -59,7 +59,11 @@ export interface PrintedAnchor {
   y: number;
 }
 
+/** Detectiestrategie: alleen de blokken bij het schoollogo, of alles wat de app kan. */
+export type Strategy = 'logo' | 'volledig';
+
 export interface Settings {
+  strategy: Strategy;
   template: string;
   numMin: number;
   numMax: number;
@@ -100,6 +104,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
+  strategy: 'logo',
   template: 'Kandidaat {n}',
   numMin: 10,
   numMax: 99,

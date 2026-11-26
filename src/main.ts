@@ -1,6 +1,6 @@
 import './styles.css';
 import { zipSync } from 'fflate';
-import { DEFAULT_SETTINGS, type Box, type BoxKind, type PageState, type Rot, type Settings } from './types';
+import { DEFAULT_SETTINGS, type Box, type BoxKind, type PageState, type Rot, type Settings, type Strategy } from './types';
 import { openFile, isSupported, release, withRotation, type Source } from './pdfio';
 import { detectPage, norm } from './detect';
 import { analyzeClassSplit, completeFromHeader, completeFromPeers, completeFromSameSheet, isNameHit, printedSimilarity, SAME_SHEET, InkMask, nameTokensFromFileName, refineWithInk } from './detect-core';
@@ -235,6 +235,29 @@ const miQuick = mi('✏️ Snel wissen in een PDF…', quickFix, 'Iets gemist in
 const btnTemplates = mi('📐 Sjablonen…', () => openTemplates(), 'Vaklayout opslaan of toepassen');
 const btnClear = mi('🗑 Alles wissen', clearAll, '', 'danger');
 
+/** Detectiestrategie: knoppen bovenin. */
+const STRATEGIES: [Strategy, string, string][] = [
+  ['logo', '🏫 Schoollogo', 'Alleen het schoollogo zoeken (kopwoord, bijv. "Coornhert") en daar de hele bovenkant weghalen: het invulblok van het antwoordblad en het kladpapier. Verder niets. Snel en voorspelbaar.'],
+  ['volledig', '🔍 Volledig', "Alles wat de app kan: het logo, labels als Naam/Klas/Examennummer, geprinte markeringen, namen uit de bestandsnaam, aanvullen op basis van andere pagina's en gedraaide pagina's. Vindt meer, maar kan ook vaker te veel weghalen."],
+];
+const strategyBtns = STRATEGIES.map(([v, label, title]) =>
+  el('button', { class: 'btn small', 'data-v': v, title, onclick: () => setStrategy(v) }, label),
+);
+const strategyBar = el('div', { class: 'strategy', role: 'group', 'aria-label': 'Detectiestrategie' }, el('span', { class: 'strategy-label' }, 'Detectie:'), el('span', { class: 'seg' }, ...strategyBtns));
+function renderStrategy() {
+  for (const b of strategyBtns) b.classList.toggle('active', b.dataset.v === S.strategy);
+}
+function setStrategy(v: Strategy) {
+  if (S.strategy === v) return;
+  S.strategy = v;
+  saveSettings();
+  renderStrategy();
+  const name = STRATEGIES.find((x) => x[0] === v)![1];
+  if (docs.some((d) => d.status === 'klaar'))
+    toast(`Detectie: ${name}. Geldt voor nieuwe bestanden; opnieuw detecteren om het op de huidige toe te passen.`, { label: 'Nu opnieuw detecteren', run: () => detectAll(true) });
+}
+renderStrategy();
+
 function commitLink(): HTMLElement | string {
   if (!__COMMIT__) return '';
   return el('a', {
@@ -252,6 +275,7 @@ app.append(
     { class: 'top' },
     el('div', { class: 'brand' }, el('img', { src: './favicon.svg', alt: '' }), 'NamenWeg', commitLink(), el('small', {}, 'toetsen anonimiseren')),
     el('button', { class: 'privacy', onclick: () => openHelp('privacy'), title: 'Hoe wordt mijn privacy beschermd?' }, '🔒 100% lokaal – er wordt niets geüpload'),
+    strategyBar,
     el('div', { class: 'spacer' }),
     el('button', { class: 'btn', onclick: () => openHelp() }, '❓ Help'),
     menu('main', '☰ Menu', 'Meer opties', [
@@ -1151,7 +1175,7 @@ const detectRunningMain = () => runningMain > 0;
  * leesbare gedrukte tekst rechtop stond, alsnog gedraaid doorzoeken (op de achtergrond).
  */
 function queueRotationChecks() {
-  if (!S.searchRotated) return;
+  if (!S.searchRotated || S.strategy !== 'volledig') return;
   let n = 0;
   for (const d of docs) {
     if (d.status !== 'klaar') continue;
@@ -1254,6 +1278,8 @@ async function runDetect(doc: Doc, p: PageState, phase: Phase) {
  * door de OCR gemist werden, worden aangevuld en daarna aangepast aan de inkt op deze pagina.
  */
 async function completeMissing(): Promise<number> {
+  // Vangnetten (aanvullen op basis van andere pagina's) horen bij de volledige strategie.
+  if (S.strategy !== 'volledig') return 0;
   const pages = () => docs.filter((d) => d.status === 'klaar').flatMap((d) => d.pages);
   // Eerst op basis van vakken op dezelfde pagina elders; daarna (met die vakken erbij) op basis
   // van hetzelfde gedrukte blad, voor bladen met maar één label.
@@ -2899,7 +2925,8 @@ function openHelp(section?: string) {
       el('p', {}, 'Een zwart vlak óp een PDF leggen is onveilig: de oorspronkelijke scan zit er dan nog onder en kan eruit gehaald worden. NamenWeg bouwt daarom elke pagina opnieuw op: de pagina wordt naar pixels omgezet, de pixels van het naamvak worden overschreven, en alleen díé nieuwe afbeelding komt in een gloednieuwe PDF. Er gaan geen originele beeldlagen, tekstlagen, metadata (zoals auteur, scanner of bestandsnaam) mee.'),
       el('p', {}, 'Na de export controleert de app elk bestand automatisch: geen tekstlaag, één afbeelding per pagina, en geen namen of de oorspronkelijke bestandsnaam in de metadata.'),
       el('h3', {}, '🔍 Automatische detectie'),
-      el('p', {}, 'De app leest de voorgedrukte tekst op elke pagina en zoekt labels zoals "Naam kandidaat", "Examen no.", "Leerlingnummer" en "Klas". Vanaf het label groeit het vak mee met het handschrift en eventuele invulhokjes. Staat er rechtop niets, dan wordt de pagina gedraaid bekeken (handig voor liggende uitwerkbijlagen).'),
+      el('p', {}, 'Bovenin kies je de strategie. "🏫 Schoollogo" (standaard) zoekt alleen het schoollogo (het kopwoord uit Instellingen, bijv. "Coornhert") en haalt daar de hele bovenkant van de pagina weg: het invulblok van het antwoordblad en van het kladpapier. Verder niets, dus ook geen "NAAM:" op een voorblad zonder logo. "🔍 Volledig" doet alles hieronder.'),
+      el('p', {}, 'Volledig: de app leest de voorgedrukte tekst op elke pagina en zoekt labels zoals "Naam kandidaat", "Examen no.", "Leerlingnummer" en "Klas". Vanaf het label groeit het vak mee met het handschrift en eventuele invulhokjes. Staat er rechtop niets, dan wordt de pagina gedraaid bekeken (handig voor liggende uitwerkbijlagen).'),
       el('p', {}, `Mist de tekstherkenning een label op één pagina (bijv. "Examen no."), dan vult de app het vak aan op basis van dezelfde kop op andere pagina's. Zulke vakken zijn gemarkeerd als "afgeleid". Ook wordt de naam uit de bestandsnaam (bijv. "jansen piet.pdf") overal op de pagina gezocht.`),
       el('p', {}, 'Handgeschreven namen zónder voorgedrukt label kunnen niet altijd automatisch gevonden worden. Controleer daarom altijd het resultaat met het 🔎 Controle-overzicht of de knop "Voorbeeld".'),
       el('h3', {}, '✏ Handmatig aanpassen'),
