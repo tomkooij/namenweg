@@ -48,6 +48,8 @@ export interface PageState {
   printed?: string[];
   /** Posities van die gedrukte woorden (genormaliseerd), om bladen uit te lijnen. */
   printedPos?: PrintedAnchor[];
+  /** Plek van het kopwoord (bijv. de schoolnaam in het logo), rechtop gelezen; zie Settings.kwKop. */
+  kop?: Rect;
 }
 
 /** Goed leesbaar gedrukt woord met zijn plek op de pagina (midden, 0..1). */
@@ -79,6 +81,11 @@ export interface Settings {
   kwNummer: string;
   kwKlas: string;
   kwStop: string;
+  /**
+   * Kopwoorden (bijv. de schoolnaam in het logo): staat er zo'n woord, dan staan de
+   * persoonsgegevens ernaast, ook als het label "Naam" onleesbaar is.
+   */
+  kwKop: string;
   detectNummer: boolean;
   detectKlas: boolean;
   padding: number;
@@ -109,6 +116,7 @@ export const DEFAULT_SETTINGS: Settings = {
   kwNaam: 'naam, naam kandidaat, kandidaat, naam leerling, achternaam, voornaam, name, kandidaatnaam, leerlingnaam, student',
   kwNummer: 'examen no, examen nr, examen, examennummer, kandidaat nr, kandidaatnummer, leerling nr, leerlingnummer, llnr, lln nr, studentnummer, student nr, exam no, candidate number',
   kwKlas: 'klas, groep, stamgroep, class',
+  kwKop: 'coornhert',
   kwStop: 'examenvak, vak, datum, date, docent, blad, pagina, cijfer, score, school, gymnasium, coornhert, toets, onderwerp, niveau',
   detectNummer: true,
   detectKlas: true,

@@ -10,7 +10,7 @@ import type { Box, Rot, Settings } from './types';
 import { recognize, type OcrWord } from './ocr';
 import { rotateCanvas } from './pdfio';
 import { uid } from './util';
-import { type DetectResult, findNameWords, findLabels, InkMask, mergeBoxes, norm, parsePhrases, printedAnchors, printedWords, regionsFor, unrotate } from './detect-core';
+import { type DetectResult, findKop, findNameWords, findLabels, kopWords, InkMask, mergeBoxes, norm, parsePhrases, printedAnchors, printedWords, regionsFor, unrotate } from './detect-core';
 
 export { norm };
 export type { DetectResult };
@@ -194,6 +194,7 @@ export async function detectPage(
       upright: r === 0,
       printed: r === 0 ? printedWords(words0) : undefined,
       printedPos: r === 0 ? printedAnchors(words0, W, H) : undefined,
+      kop: r === 0 ? findKop(words0, kopWords(settings), W, H) : undefined,
       boxes,
       rotation: r,
       labels: personal.map((l) => l.text),
@@ -205,7 +206,7 @@ export async function detectPage(
   const extra = nameBoxes(words0, 0, []);
   // Losse naamtreffers krijgen geen vervangende tekst: die hoort bij een echt naamvak.
   if (extra.length) {
-    return { upright, printed: printedWords(words0), printedPos: printedAnchors(words0, W, H), boxes: extra, rotation: 0, labels: [], note: `Geen labels, wel ${extra.length}× een gezochte naam gevonden` };
+    return { upright, printed: printedWords(words0), printedPos: printedAnchors(words0, W, H), kop: findKop(words0, kopWords(settings), W, H), boxes: extra, rotation: 0, labels: [], note: `Geen labels, wel ${extra.length}× een gezochte naam gevonden` };
   }
-  return { upright, printed: printedWords(words0), printedPos: printedAnchors(words0, W, H), boxes: [], rotation: 0, labels: [], note: 'Geen labels gevonden' };
+  return { upright, printed: printedWords(words0), printedPos: printedAnchors(words0, W, H), kop: findKop(words0, kopWords(settings), W, H), boxes: [], rotation: 0, labels: [], note: 'Geen labels gevonden' };
 }

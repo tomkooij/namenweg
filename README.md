@@ -58,6 +58,10 @@ pagina, en geen namen of de oorspronkelijke bestandsnaam in de metadata (Info en
   gedrukte blad als bij andere leerlingen, dan wordt hun naamvak overgenomen, uitgelijnd op de
   gedrukte tekst en bijgesneden op de inkt
 - Tweede OCR-ronde op het onbewerkte beeld als handschrift tegen het naamlabel aan staat
+- Kopwoord (instelbaar, standaard "Coornhert" uit het schoollogo): staat dat bovenaan de pagina
+  maar is het label "Naam" onleesbaar, dan komt het naamvak (en klasvak) op de plek waar het bij
+  andere leerlingen naast het kopwoord gevonden is; zonder voorbeeld op de standaardplek van het
+  invulblok rechts naast het logo
 - Zoekt de naam uit de bestandsnaam (bijv. `jansen piet.pdf`) ook elders op de pagina, net als
   een optionele namenlijst (bijv. de hele klas; wordt nooit opgeslagen). Korte namen (< 5
   letters) alleen exact, langere met één tikfout; zo'n losse treffer krijgt geen vervangende tekst

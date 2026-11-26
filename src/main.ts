@@ -3,7 +3,7 @@ import { zipSync } from 'fflate';
 import { DEFAULT_SETTINGS, type Box, type BoxKind, type PageState, type Rot, type Settings } from './types';
 import { openFile, isSupported, release, withRotation, type Source } from './pdfio';
 import { detectPage, norm } from './detect';
-import { analyzeClassSplit, completeFromPeers, completeFromSameSheet, isNameHit, printedSimilarity, SAME_SHEET, InkMask, nameTokensFromFileName, refineWithInk } from './detect-core';
+import { analyzeClassSplit, completeFromHeader, completeFromPeers, completeFromSameSheet, isNameHit, printedSimilarity, SAME_SHEET, InkMask, nameTokensFromFileName, refineWithInk } from './detect-core';
 import { setWorkerCount, defaultWorkerCount, onOcrStatus } from './ocr';
 import { applyRedactions, exportDocument, verifyOutput, combineDocuments, type VerifyResult } from './redact';
 import { el, uid, uniqueNumber, fillTemplate, safeFileName, download, toCsv, fmtBytes } from './util';
@@ -1226,6 +1226,7 @@ async function runDetect(doc: Doc, p: PageState, phase: Phase) {
     p.detectNote = res.note;
     p.printed = res.printed;
     p.printedPos = res.printedPos;
+    p.kop = res.kop;
   } catch (e) {
     p.detect = 'fout';
     p.detectNote = 'Fout bij detectie: ' + (e instanceof Error ? e.message : String(e));
@@ -1258,6 +1259,8 @@ async function completeMissing(): Promise<number> {
   // van hetzelfde gedrukte blad, voor bladen met maar één label.
   let added = await addCompleted(completeFromPeers(pages()));
   added += await addCompleted(completeFromSameSheet(pages()));
+  // Tot slot: naast het kopwoord (logo), voor bladen waar het label zelf onleesbaar is.
+  added += await addCompleted(completeFromHeader(pages()));
   if (added) {
     renderDocList();
     renderStrip();
@@ -1288,7 +1291,7 @@ async function addCompleted(adds: { page: unknown; box: Omit<Box, 'id'> }[]): Pr
     if (!refined) continue; // leeg: niets te verbergen
     added++;
     p.boxes.push({ ...box, ...refined, id: uid() });
-    p.detectNote = (p.detectNote ?? '') + ` + ${KIND_LABEL[box.kind].toLowerCase()} aangevuld (${box.label?.startsWith('zelfde blad') ? 'zelfde blad als bij andere leerlingen' : "afgeleid van andere pagina's"})`;
+    p.detectNote = (p.detectNote ?? '') + ` + ${KIND_LABEL[box.kind].toLowerCase()} aangevuld (${box.label?.startsWith('zelfde blad') ? 'zelfde blad als bij andere leerlingen' : box.label?.startsWith('naast kopwoord') ? 'naast het kopwoord' : "afgeleid van andere pagina's"})`;
     doc.exported = false;
   }
   return added;
@@ -2785,7 +2788,7 @@ function openSettings() {
   color.addEventListener('input', () => (draft.textColor = color.value));
 
   const save = () => {
-    const oldKw = [S.kwNaam, S.kwNummer, S.kwKlas, S.kwStop, S.detectKlas, S.detectNummer, S.searchRotated, S.padding, S.ocrDpi].join('|');
+    const oldKw = [S.kwNaam, S.kwNummer, S.kwKlas, S.kwStop, S.kwKop, S.detectKlas, S.detectNummer, S.searchRotated, S.padding, S.ocrDpi].join('|');
     const namesChanged = extraNames !== namesArea.value;
     extraNames = namesArea.value;
     Object.assign(S, draft);
@@ -2794,7 +2797,7 @@ function openSettings() {
     setWorkerCount(S.ocrWorkers);
     dlg.close();
     renderAll();
-    const newKw = [S.kwNaam, S.kwNummer, S.kwKlas, S.kwStop, S.detectKlas, S.detectNummer, S.searchRotated, S.padding, S.ocrDpi].join('|');
+    const newKw = [S.kwNaam, S.kwNummer, S.kwKlas, S.kwStop, S.kwKop, S.detectKlas, S.detectNummer, S.searchRotated, S.padding, S.ocrDpi].join('|');
     if ((oldKw !== newKw || namesChanged) && docs.length) toast('Detectie-instellingen gewijzigd. Kies ☰ Menu → "Alles opnieuw detecteren" om ze toe te passen.');
   };
 
@@ -2832,6 +2835,7 @@ function openSettings() {
         text('kwNummer', 'Labels voor nummer', undefined, true),
         text('kwKlas', 'Labels voor klas', undefined, true),
         text('kwStop', 'Andere labels (begrenzen een vak, worden niet verwijderd)', 'Bijv. "Examenvak", "Datum": het naamvak stopt vóór zo\'n label.', true),
+        text('kwKop', 'Kopwoorden (bijv. de schoolnaam in het logo)', 'Staat zo\'n woord op de pagina en is het label "Naam" onleesbaar, dan komt er toch een naamvak naast: op de plek waar het bij andere leerlingen gevonden is.', true),
         el('div', { class: 'grid2' },
           num('padding', 'Extra marge rond vakken (× tekstregelhoogte)', { min: '0', max: '3', step: '0.1' }),
           select('ocrDpi', 'Resolutie voor tekstherkenning', [['150', '150 dpi (sneller)'], ['200', '200 dpi (aanbevolen)'], ['300', '300 dpi (nauwkeuriger, traag)']]),

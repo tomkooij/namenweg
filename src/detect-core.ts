@@ -52,6 +52,8 @@ export interface DetectResult {
   printed?: string[];
   /** Plekken van die woorden (zie printedAnchors). */
   printedPos?: PrintedAnchor[];
+  /** Plek van het kopwoord (genormaliseerd), zie findKop. */
+  kop?: { x: number; y: number; w: number; h: number };
   boxes: Box[];
   note: string;
   rotation: Rot;
@@ -940,6 +942,100 @@ export function completeFromSameSheet(pages: SheetPage[]): { page: SheetPage; bo
           rot: list[0].rot,
           text: kind === 'naam' && !q.boxes.some((b) => b.text),
           label: `zelfde blad als ${list.length} andere pagina('s)`,
+        },
+      });
+    }
+  }
+  return added;
+}
+
+// ───────────────────────── Kopwoord (logo) ─────────────────────────
+
+/** Kopwoorden uit de instellingen (genormaliseerd). */
+export const kopWords = (s: Settings) => s.kwKop.split(/[,;\n]+/).map(norm).filter((t) => t.length >= 4);
+
+/**
+ * Het kopwoord op de pagina (bijv. "COORNHERT" in het logo), als genormaliseerde rechthoek, of
+ * undefined. Een tikfout mag bij woorden vanaf 6 letters.
+ */
+export function findKop(words: OcrWord[], kop: string[], W: number, H: number) {
+  if (!kop.length) return undefined;
+  const hit = words
+    .filter((w) => w.conf >= 60)
+    .find((w) => {
+      const n = norm(w.text);
+      return kop.some((k) => n === k || (k.length >= 6 && Math.abs(n.length - k.length) <= 1 && lev(n, k, 1) <= 1));
+    });
+  return hit ? { x: hit.x0 / W, y: hit.y0 / H, w: (hit.x1 - hit.x0) / W, h: (hit.y1 - hit.y0) / H } : undefined;
+}
+
+export interface KopPage extends SheetPage {
+  kop?: { x: number; y: number; w: number; h: number };
+}
+
+/**
+ * Standaardplek van het invulblok (Naam/Vak/Datum/Klas) ten opzichte van het kopwoord, in
+ * breedtes van het kopwoord, vanaf de linkerkant ervan: rechts ernaast, iets hoger tot iets
+ * lager. Gemeten op het antwoordblad met het Coornhert-logo; wordt alleen gebruikt als er in de
+ * hele stapel geen enkel voorbeeld is om van te leren.
+ */
+const KOP_BLOK = { x0: 1.4, x1: 3.45, y0: -0.2, y1: 0.55 };
+
+/**
+ * Vangnet op basis van het kopwoord: staat het kopwoord op de pagina maar is er geen naam- (of
+ * klas-/nummer)vak bij een label gevonden, dan komt er een vak op de plek waar dat bij andere
+ * pagina's met hetzelfde kopwoord wél gevonden is (in verhouding tot de plek en grootte van het
+ * kopwoord). Zonder enig voorbeeld: alleen een naamvak op de standaardplek naast het kopwoord.
+ * Daarna nog bijsnijden op de inkt (refineWithInk); een leeg vak wordt niet toegevoegd.
+ */
+export function completeFromHeader(pages: KopPage[]): { page: KopPage; box: Omit<Box, 'id'> }[] {
+  const added: { page: KopPage; box: Omit<Box, 'id'> }[] = [];
+  const pt = (p: KopPage, r: { x: number; y: number; w: number; h: number }) => ({ x: r.x * p.wPt, y: r.y * p.hPt, w: r.w * p.wPt, h: r.h * p.hPt });
+  const fromLabel = (p: KopPage) => p.boxes.filter((b) => b.source === 'auto' && b.ax !== undefined && b.kind !== 'handmatig' && !isNameHit(b));
+  // Voorbeelden: vak bij een label, vlak bij het kopwoord; plek in kopwoord-breedtes.
+  const examples = new Map<BoxKind, { x0: number; y0: number; x1: number; y1: number; rot: Rot }[]>();
+  for (const p of pages) {
+    if (!p.kop) continue;
+    const k = pt(p, p.kop);
+    if (k.w <= 0) continue;
+    for (const b of fromLabel(p)) {
+      const r = pt(p, b);
+      const rel = { x0: (r.x - k.x) / k.w, y0: (r.y - k.y) / k.w, x1: (r.x + r.w - k.x) / k.w, y1: (r.y + r.h - k.y) / k.w, rot: b.rot };
+      if (rel.x0 < -1 || rel.x1 > 6 || rel.y0 < -1.5 || rel.y1 > 2) continue;
+      const list = examples.get(b.kind) ?? [];
+      list.push(rel);
+      examples.set(b.kind, list);
+    }
+  }
+  const median = (a: number[]) => [...a].sort((x, y) => x - y)[Math.floor((a.length - 1) / 2)];
+  for (const q of pages) {
+    if (!q.kop || q.checked) continue;
+    const k = pt(q, q.kop);
+    const kinds = new Set<BoxKind>([...examples.keys(), 'naam']);
+    for (const kind of kinds) {
+      if (q.boxes.some((b) => b.kind === kind && !isNameHit(b))) continue;
+      const list = examples.get(kind);
+      // Standaardplek alleen bij een kopwoord bovenaan de pagina (logo), niet ergens in de tekst.
+      if (!list && (kind !== 'naam' || q.kop.y > 0.25)) continue;
+      const rel = list
+        ? { x0: Math.min(...list.map((v) => v.x0)), x1: Math.max(...list.map((v) => v.x1)), y0: median(list.map((v) => v.y0)), y1: median(list.map((v) => v.y1)), rot: list[0].rot }
+        : { ...KOP_BLOK, rot: 0 as Rot };
+      const x0 = Math.max(0, (k.x + rel.x0 * k.w) / q.wPt);
+      const y0 = Math.max(0, (k.y + rel.y0 * k.w) / q.hPt);
+      const x1 = Math.min(1, (k.x + rel.x1 * k.w) / q.wPt);
+      const y1 = Math.min(1, (k.y + rel.y1 * k.w) / q.hPt);
+      if (x1 <= x0 || y1 <= y0) continue;
+      const box = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+      if (q.boxes.some((b) => !isNameHit(b) && overlapArea(b, box) > 0.3 * box.w * box.h)) continue;
+      added.push({
+        page: q,
+        box: {
+          ...box,
+          kind,
+          source: 'auto',
+          rot: rel.rot,
+          text: kind === 'naam' && !q.boxes.some((b) => b.text),
+          label: list ? `naast kopwoord (geleerd van ${list.length} pagina('s))` : 'naast kopwoord (standaardplek)',
         },
       });
     }
