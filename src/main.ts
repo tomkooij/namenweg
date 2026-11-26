@@ -7,6 +7,8 @@ import { analyzeClassSplit, completeFromPeers, printedSimilarity, SAME_SHEET, In
 import { setWorkerCount, defaultWorkerCount, onOcrStatus } from './ocr';
 import { applyRedactions, exportDocument, verifyOutput, combineDocuments, type VerifyResult } from './redact';
 import { el, uid, uniqueNumber, fillTemplate, safeFileName, download, toCsv, fmtBytes } from './util';
+import { openMatcher, matchState, matchChip, rosterNames, studentById } from './match';
+import { UNK } from './roster';
 
 // ───────────────────────── State ─────────────────────────
 
@@ -30,6 +32,8 @@ interface Doc {
   splitSuggest?: number[];
   /** Waar dit deel vandaan komt en waarom zo gesplitst (voor het analysevenster). */
   splitInfo?: SplitInfo;
+  /** Gekoppelde leerling uit de leerlinglijst (id), of UNK = niet in lijst. Alleen in het geheugen. */
+  student?: string;
 }
 
 interface SplitInfo {
@@ -116,7 +120,8 @@ let extraNames = '';
 
 function namesFor(d: Doc): string[] {
   const own = S.searchFileNames ? nameTokensFromFileName(d.name, S) : [];
-  const extra = extraNames
+  const extra = [extraNames, ...rosterNames()]
+    .join('\n')
     .split(/[\n,;]+/)
     .flatMap((line) => nameTokensFromFileName(line.trim() + '.x', S));
   return [...new Set([...own, ...extra])];
@@ -218,6 +223,8 @@ const btnExportAll = el('button', { class: 'btn primary', onclick: () => exportA
 const btnKey = mi('🗝 Sleutelbestand (CSV)', downloadKey, 'Welke kandidaat is wie (blijft op je computer)');
 const btnRenumber = mi('🎲 Alle nummers opnieuw', renumberAll, 'Geef alle documenten nieuwe willekeurige nummers');
 const btnOverview = el('button', { class: 'btn', onclick: () => openOverview(), title: "Alle pagina's in één overzicht controleren" }, '🔎 Controle-overzicht');
+const btnMatch = el('button', { class: 'btn', onclick: () => startMatcher(), title: 'Koppel elke toets aan een leerling uit de leerlinglijst (CSV/Excel); de koppeling komt in het sleutelbestand' }, '👥 Leerlingen koppelen');
+const miMatch = mi('👥 Leerlingen koppelen…', () => startMatcher(), 'Toetsen koppelen aan een leerlinglijst (CSV/Excel)');
 const btnTemplates = mi('📐 Sjablonen…', () => openTemplates(), 'Vaklayout opslaan of toepassen');
 const btnClear = mi('🗑 Alles wissen', clearAll, '', 'danger');
 
@@ -244,6 +251,7 @@ app.append(
       menuHead('Alle documenten'),
       btnDetectAll,
       btnTemplates,
+      miMatch,
       btnKey,
       btnRenumber,
       btnClear,
@@ -271,7 +279,7 @@ app.append(
       ),
       attentionToggle,
       docList,
-      el('div', { class: 'actions' }, btnOverview, btnExportAll),
+      el('div', { class: 'actions' }, btnOverview, btnMatch, btnExportAll),
     ),
     el('section', { class: 'center' }, toolbar, el('div', { class: 'editor-wrap' }, editor, busyBanner), strip),
     inspector,
@@ -308,7 +316,7 @@ window.addEventListener('drop', (e) => {
 });
 
 window.addEventListener('beforeunload', (e) => {
-  if (docs.some((d) => !d.exported)) {
+  if (docs.some((d) => !d.exported) || matchState.dirty) {
     e.preventDefault();
   }
 });
@@ -480,6 +488,8 @@ function splitDoc(d: Doc, starts: number[], quiet = false, how = 'handmatig', lo
       src: null,
       pages: idx.map((i, j) => ({ ...structuredClone(d.pages[i]), index: j, boxes: d.pages[i].boxes.map((b) => ({ ...b, id: uid() })) })),
       num,
+      // Het eerste deel houdt de koppeling met de leerling; de rest moet opnieuw gekoppeld worden.
+      student: k === 0 ? d.student : undefined,
       status: 'klaar',
       splitChecked: true,
       splitInfo: { from: d.splitInfo?.from ?? d.name, batch, how, log, part: k + 1, total: bounds.length - 1, first: idx[0] + 1, last: idx[idx.length - 1] + 1 },
@@ -512,6 +522,7 @@ function mergeDocs(list: Doc[], name = list.map((d) => d.name).join(' + '), quie
     src: null,
     pages: list.flatMap((d) => d.pages).map((p, j) => ({ ...structuredClone(p), index: j, boxes: p.boxes.map((x) => ({ ...x, id: uid() })) })),
     num: list[0].num,
+    student: list.find((d) => d.student !== undefined)?.student,
     status: 'klaar',
     splitChecked: true,
   };
@@ -540,6 +551,7 @@ function splitGroup(d: Doc): Doc[] {
 /** Splitsing (opnieuw) toepassen op een groep documenten; kandidaatnummers zoveel mogelijk behouden. */
 function applySplitEdit(list: Doc[], starts: number[], how: string, log: string[] = []) {
   const oldNums = list.map((d) => d.num);
+  const oldStudents = list.map((d) => d.student);
   const name = list[0].splitInfo?.from ?? list[0].name;
   const base = list.length > 1 ? mergeDocs(list, name, true) : list[0];
   if (!base) return;
@@ -554,6 +566,7 @@ function applySplitEdit(list: Doc[], starts: number[], how: string, log: string[
   const keep = oldNums.slice(0, parts.length);
   const taken = new Set([...docs.filter((x) => !parts.includes(x)).map((x) => x.num), ...keep]);
   parts.forEach((p, k) => {
+    p.student = oldStudents[k];
     if (k < keep.length) p.num = keep[k];
     else if (taken.has(p.num)) p.num = uniqueNumber(S.numMin, S.numMax, taken);
     taken.add(p.num);
@@ -1319,6 +1332,7 @@ function autoSplitClasses(): { msg: string; actions: ToastAction[]; review: Doc[
     review: [...uneven, ...maybe.map((d) => [d])],
     actions: [
       { label: 'Bekijken', run: () => { const g = splits[0].parts.filter((x) => docs.includes(x)); if (g.length) openSplitReview(g); } },
+      { label: 'Leerlingen koppelen', run: () => startMatcher() },
     {
       label: 'Terugdraaien',
       run: () => {
@@ -1401,6 +1415,18 @@ function docChips(d: Doc) {
       }, `✂ ${g.indexOf(d) + 1} van ${g.length} uit ${d.splitInfo.from}`),
     );
   }
+  const mc = matchChip(d, docs);
+  if (mc)
+    chips.push(
+      el('button', {
+        class: `chip act ${mc.cls}`,
+        title: `${mc.title}. Klik om te koppelen.`,
+        onclick: (e: Event) => {
+          e.stopPropagation();
+          startMatcher(d);
+        },
+      }, mc.text),
+    );
   if (d.exported) chips.push(el('span', { class: 'chip ok' }, '✓ geëxporteerd'));
   return chips;
 }
@@ -1462,6 +1488,8 @@ function renderDocList() {
   btnKey.disabled = !any;
   btnRenumber.disabled = !any;
   btnOverview.disabled = !any;
+  btnMatch.disabled = !any;
+  miMatch.disabled = !any;
   btnClear.disabled = !docs.length;
   btnExportAll.textContent = docs.length > 1 ? `⬇ Exporteer alles (${docs.length})` : '⬇ Exporteer';
 }
@@ -2293,6 +2321,7 @@ function showExportDialog(results: ExportResult[]) {
     el(
       'div',
       { class: 'dfoot' },
+      el('button', { class: 'btn', onclick: () => startMatcher(), title: 'Elke toets aan een leerling uit de leerlinglijst koppelen (voor het sleutelbestand)' }, '👥 Leerlingen koppelen'),
       S.keyCsv ? el('button', { class: 'btn', onclick: downloadKey }, '🗝 Sleutel (CSV)') : null,
       results.length > 1 ? el('button', { class: 'btn', onclick: downloadCombined }, '📚 Eén samengevoegde PDF') : null,
       results.length > 1
@@ -2636,12 +2665,54 @@ function downloadKey() {
   const list = docs.filter((d) => d.status === 'klaar');
   if (!list.length) return;
   const names = new Map(lastExport.map((r) => [r.doc, r.fileName]));
-  const rows: (string | number)[][] = [['Kandidaat', 'Nummer', 'Origineel bestand', 'Geëxporteerd bestand', "Pagina's"]];
-  for (const d of [...list].sort((a, b) => a.num - b.num)) rows.push([docText(d), d.num, d.name, names.get(d) ?? '', d.pages.length]);
+  const roster = matchState.roster;
+  const rows: (string | number)[][] = [
+    roster
+      ? ['Kandidaat', 'Nummer', 'Leerling', 'Leerlingnummer', 'Klas', 'Origineel bestand', 'Geëxporteerd bestand', "Pagina's"]
+      : ['Kandidaat', 'Nummer', 'Origineel bestand', 'Geëxporteerd bestand', "Pagina's"],
+  ];
+  for (const d of [...list].sort((a, b) => a.num - b.num)) {
+    const s = studentById(d.student);
+    const who = roster ? [s ? s.name : d.student === UNK ? '(niet in lijst)' : '(niet gekoppeld)', s?.nr ?? '', s?.klas ?? ''] : [];
+    rows.push([docText(d), d.num, ...who, d.name, names.get(d) ?? '', d.pages.length]);
+  }
+  // Leerlingen van de lijst zonder toets (bijv. afwezig).
+  if (roster)
+    for (const s of roster.students)
+      if (!list.some((d) => d.student === s.id)) rows.push(['(geen toets)', '', s.name, s.nr, s.klas, '', '', '']);
   const n = new Date();
   const pad = (v: number) => String(v).padStart(2, '0');
   const stamp = `${n.getFullYear()}-${pad(n.getMonth() + 1)}-${pad(n.getDate())}-${pad(n.getHours())}${pad(n.getMinutes())}`;
   download(new Blob([toCsv(rows)], { type: 'text/csv;charset=utf-8' }), `sleutel-namenweg-${stamp}.csv`);
+  matchState.dirty = false;
+}
+
+/** Venster om de toetsen aan de leerlinglijst te koppelen (optioneel beginnend bij `start`). */
+function startMatcher(start?: Doc) {
+  if (detectQueue.length || detectRunning > 0) toast('Let op: de detectie is nog bezig; naamvakken kunnen nog veranderen.');
+  openMatcher({
+    docs: () => docs,
+    label: (d) => docText(d as Doc),
+    merge: (list) => mergeDocs(list as Doc[], undefined, true),
+    openSplit: (d, onDone) => {
+      const g = splitGroup(d as Doc);
+      if (g.some((x) => detectQueue.some((j) => j.doc === x) || x.pages.some((p) => p.detect === 'bezig'))) {
+        toast('Wacht tot de detectie van dit document klaar is.');
+        return false;
+      }
+      openSplitReview(g, undefined, onDone);
+      return true;
+    },
+    show: (d) => {
+      cur = d as Doc;
+      curPage = 0;
+      selBox = null;
+      renderAll();
+    },
+    changed: () => renderDocList(),
+    downloadKey,
+    toast: (m) => toast(m),
+  }, start?.id);
 }
 
 // ───────────────────────── Instellingen ─────────────────────────
@@ -2810,6 +2881,14 @@ function openHelp(section?: string) {
       ),
       el('h3', {}, '🧑‍🎓 Namenlijst'),
       el('p', {}, 'In ☰ Menu → Instellingen kun je een lijst met namen plakken (bijv. de hele klas). Die namen worden op elke pagina gezocht, ook buiten de naamvakken. De lijst wordt niet opgeslagen.'),
+      el('h3', {}, '👥 Leerlingen koppelen'),
+      el('p', {}, 'Wil je weten welke toets van welke leerling is, zonder dat de namen in de geanonimiseerde toetsen komen? Kies "👥 Leerlingen koppelen" en laad de leerlinglijst (CSV of Excel .xlsx, bijv. een export uit de leerlingadministratie). Je ziet dan per toets de naamvakken uit de scan; typ een paar letters van de voor- of achternaam (of initialen, of het leerlingnummer) en druk op Enter. Passen er meer namen, kies dan met 1, 2 of 3. De app springt vanzelf naar de volgende toets.'),
+      el('ul', {},
+        el('li', {}, 'Kies je een leerling die al een toets heeft, dan wordt het vak rood en zie je de andere toets ernaast om het handschrift te vergelijken. Hoort het bij elkaar (bijv. een apart gescande uitwerkbijlage), voeg ze dan samen. Horen er twee leerlingen in één toets, pas dan de splitsing aan.'),
+        el('li', {}, 'Leerlingen met meer dan één toets blijven rood tot het klopt; het Overzicht (Ctrl+O) toont ook wie nog geen toets heeft.'),
+        el('li', {}, 'Staat iemand niet op de lijst? Typ de naam en druk Shift+Enter om de leerling toe te voegen, of Ctrl+Enter voor "niet in lijst / onleesbaar".'),
+        el('li', {}, 'De kandidaatnummers blijven willekeurig. Wie wie is, staat alleen in het sleutelbestand (met leerlingnummer en klas, en de leerlingen zonder toets). De lijst wordt niet opgeslagen; de namen worden wel gebruikt om de export te controleren.'),
+      ),
       el('h3', {}, '🗝 Sleutelbestand'),
       el('p', {}, 'Wil je later terugvinden wie "Kandidaat 67" was, download dan het sleutelbestand (CSV). Daarin staat welk nummer bij welk origineel bestand hoort. Bewaar dit bestand apart en veilig.'),
       el('h3', {}, '💡 Tips'),
@@ -2969,6 +3048,7 @@ if (import.meta.env.DEV) {
   (window as unknown as Record<string, unknown>).__nw = {
     docs,
     S,
+    match: startMatcher,
     get cur() {
       return cur;
     },

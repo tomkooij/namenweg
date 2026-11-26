@@ -91,6 +91,16 @@ pagina, en geen namen of de oorspronkelijke bestandsnaam in de metadata (Info en
 - Voorbeeldweergave van het resultaat
 - Export per document, als ZIP of als één samengevoegde PDF
 - Optioneel sleutelbestand (CSV) om later terug te vinden wie wie was – blijft op je computer
+- **Leerlingen koppelen** aan een leerlinglijst (CSV of Excel .xlsx, ook exports met losse kolommen
+  Roepnaam/Tussenvoegsel/Achternaam, Leerlingnummer en Klas): per toets zie je de naamvakken uit de
+  scan, typ een paar letters (of initialen, of het leerlingnummer) en druk op Enter. Bij meerdere
+  passende namen kies je met 1, 2 of 3; staat de naam in de bestandsnaam, dan staat die al klaar.
+  Een leerling met meer dan één toets wordt rood, met de andere toets ernaast om het handschrift te
+  vergelijken en een knop om samen te voegen of de splitsing aan te passen. Overzicht (Ctrl+O) met
+  wie nog geen toets heeft; nieuwe leerling toevoegen (Shift+Enter) of "niet in lijst" (Ctrl+Enter);
+  ongedaan maken (Ctrl+Z). De kandidaatnummers blijven willekeurig; de koppeling (met leerlingnummer
+  en klas, plus de leerlingen zonder toets) staat alleen in het sleutelbestand. De lijst wordt niet
+  opgeslagen
 - Resolutie, JPEG-kwaliteit (standaard automatisch: ongeveer even groot als het origineel) en
   grijswaarden instelbaar
 - Licht en donker thema, sneltoetsen, offline bruikbaar

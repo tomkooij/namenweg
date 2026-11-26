@@ -199,3 +199,21 @@ export async function makeMultiSheetDemoFile(): Promise<File> {
   const bytes = await pdf.save();
   return new File([bytes as BlobPart], 'toets scheikunde h5 (één leerling).pdf', { type: 'application/pdf' });
 }
+
+/**
+ * Leerlinglijst (VERZONNEN namen) die bij de voorbeeldtoetsen past, zoals een export uit de
+ * leerlingadministratie: titelregel, losse naamkolommen, en twee leerlingen zonder toets.
+ */
+export function demoRosterCsv(): string {
+  const klas = [
+    ...STUDENTS,
+    { last: 'de Vries', first: 'Sem', nr: '204871', klas: '4B' },
+    { last: 'Mulder', first: 'Daan', nr: '204402', klas: '4B' },
+    { last: 'Hendriks', first: 'Noor', nr: '205077', klas: '4B' },
+  ];
+  const rows = klas.map((s) => {
+    const m = /^((?:[a-z]+ )*)(.+)$/.exec(s.last)!;
+    return [s.first, m[1].trim(), m[2], s.nr, s.klas].join(';');
+  });
+  return ['Klassenlijst (voorbeeld, verzonnen namen);;;;', 'Roepnaam;Tussenvoegsel;Achternaam;Leerlingnummer;Klas', ...rows].join('\n');
+}
