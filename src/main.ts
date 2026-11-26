@@ -2788,7 +2788,7 @@ function openSettings() {
   color.addEventListener('input', () => (draft.textColor = color.value));
 
   const save = () => {
-    const oldKw = [S.kwNaam, S.kwNummer, S.kwKlas, S.kwStop, S.kwKop, S.detectKlas, S.detectNummer, S.searchRotated, S.padding, S.ocrDpi].join('|');
+    const oldKw = [S.kwNaam, S.kwNummer, S.kwKlas, S.kwStop, S.kwKop, S.detectMarkers, S.detectKlas, S.detectNummer, S.searchRotated, S.padding, S.ocrDpi].join('|');
     const namesChanged = extraNames !== namesArea.value;
     extraNames = namesArea.value;
     Object.assign(S, draft);
@@ -2797,7 +2797,7 @@ function openSettings() {
     setWorkerCount(S.ocrWorkers);
     dlg.close();
     renderAll();
-    const newKw = [S.kwNaam, S.kwNummer, S.kwKlas, S.kwStop, S.kwKop, S.detectKlas, S.detectNummer, S.searchRotated, S.padding, S.ocrDpi].join('|');
+    const newKw = [S.kwNaam, S.kwNummer, S.kwKlas, S.kwStop, S.kwKop, S.detectMarkers, S.detectKlas, S.detectNummer, S.searchRotated, S.padding, S.ocrDpi].join('|');
     if ((oldKw !== newKw || namesChanged) && docs.length) toast('Detectie-instellingen gewijzigd. Kies ☰ Menu → "Alles opnieuw detecteren" om ze toe te passen.');
   };
 
@@ -2827,6 +2827,7 @@ function openSettings() {
         check('autoDetect', 'Automatisch detecteren na het toevoegen van bestanden'),
         check('detectNummer', 'Examen-/leerlingnummer verwijderen'),
         check('detectKlas', 'Klas verwijderen'),
+        check('detectMarkers', 'Naamvelden met geprinte markeringen herkennen', 'Twee zwarte vierkantjes (ca. 5 mm) linksboven en rechtsonder het naamveld: alles daartussen wordt weggehaald, ook als "Naam" onleesbaar is. Sjabloon: zie Help.'),
         check('searchFileNames', 'Ook zoeken naar de naam uit de bestandsnaam, overal op de pagina', 'Heet het bestand bijv. "jansen piet.pdf", dan worden de woorden "jansen" en "piet" overal op de pagina gezocht (werkt het best bij duidelijk schrift).'),
         namesField,
         check('autoSplit', 'Scan van een hele klas automatisch per leerling opdelen', 'Staat het naamvak op een vast ritme (bijv. op elke 2e pagina), dan krijgt elke leerling een eigen document en kandidaatnummer.'),
@@ -2909,6 +2910,14 @@ function openHelp(section?: string) {
         el('li', {}, 'Scheef of ondersteboven gescand? Draai de pagina via ⋯ boven de pagina (of toets R); de vakken draaien mee.'),
         el('li', {}, 'Staat het naamvak bij iedereen op dezelfde plek? Teken het één keer en gebruik "Vakken kopiëren".'),
         el('li', {}, 'Gebruik je vaker hetzelfde antwoordblad? Sla de vakken op als 📐 sjabloon.'),
+      ),
+      el('h3', { id: 'help-markeringen' }, '■ Naamveld met markeringen (voor je eigen toetsen)'),
+      el(
+        'p',
+        {},
+        'Maak je de toets zelf? Zet dan een naamveld met twee dichte zwarte vierkantjes (5 mm) linksboven en rechtsonder op het blad. NamenWeg herkent die vorm zonder tekstherkenning en haalt alles daartussen weg, ook als de naam slordig, schuin of over de lijn geschreven is, en ook bij een gedraaide scan of een A3-afdruk. ',
+        el('a', { href: './naamveld-sjabloon.docx', download: 'naamveld-sjabloon.docx' }, '📄 Download het Word-sjabloon'),
+        ' en kopieer een van de blokken naar je toets. Vergroot of verklein het blok niet, en houd wat wit rond de vierkantjes.',
       ),
       el('h3', {}, '🧑‍🎓 Namenlijst'),
       el('p', {}, 'In ☰ Menu → Instellingen kun je een lijst met namen plakken (bijv. de hele klas). Die namen worden op elke pagina gezocht, ook buiten de naamvakken. De lijst wordt niet opgeslagen.'),

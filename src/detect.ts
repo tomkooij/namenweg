@@ -10,7 +10,7 @@ import type { Box, Rot, Settings } from './types';
 import { recognize, type OcrWord } from './ocr';
 import { rotateCanvas } from './pdfio';
 import { uid } from './util';
-import { type DetectResult, findKop, findNameWords, findLabels, kopWords, InkMask, mergeBoxes, norm, parsePhrases, printedAnchors, printedWords, regionsFor, unrotate } from './detect-core';
+import { type DetectResult, findKop, findMarkerSquares, findNameWords, findLabels, kopWords, markerFields, InkMask, mergeBoxes, norm, parsePhrases, printedAnchors, printedWords, regionsFor, unrotate } from './detect-core';
 
 export { norm };
 export type { DetectResult };
@@ -76,12 +76,60 @@ export function enhanceForOcr(src: HTMLCanvasElement, dpi: number): HTMLCanvasEl
 }
 
 
-export async function detectPage(
-  canvas: HTMLCanvasElement,
-  settings: Settings,
-  names: string[] = [],
-  only?: Rot[],
-): Promise<DetectResult> {
+/**
+ * Detectie van één pagina: geprinte markeringen (vorm, zonder OCR) en labels (OCR). Een vak
+ * tussen markeringen is exact; vakken van labels die erbinnen vallen, vervallen.
+ */
+export async function detectPage(canvas: HTMLCanvasElement, settings: Settings, names: string[] = [], only?: Rot[]): Promise<DetectResult> {
+  const W = canvas.width;
+  const H = canvas.height;
+  let marks: Box[] = [];
+  if (settings.detectMarkers) {
+    const img = canvas.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, W, H);
+    // Iets marge: de vierkantjes zelf en een paar pixels eromheen verdwijnen ook.
+    const pad = (0.6 * settings.ocrDpi) / 25.4;
+    // Van boven naar beneden: de vervangende tekst komt in het bovenste veld.
+    marks = markerFields(findMarkerSquares(img, settings.ocrDpi))
+      .sort((a, b) => a.rect.y0 - b.rect.y0 || a.rect.x0 - b.rect.x0)
+      .map((f, i) => {
+        const x0 = Math.max(0, f.rect.x0 - pad);
+        const y0 = Math.max(0, f.rect.y0 - pad);
+        const x1 = Math.min(W, f.rect.x1 + pad);
+        const y1 = Math.min(H, f.rect.y1 + pad);
+        return {
+          id: uid(),
+          x: x0 / W,
+          y: y0 / H,
+          w: (x1 - x0) / W,
+          h: (y1 - y0) / H,
+          kind: 'naam',
+          source: 'auto',
+          rot: f.vertical ? 90 : 0,
+          text: i === 0,
+          label: 'markering',
+          ax: x0 / W,
+          ay: y0 / H,
+        } as Box;
+      });
+  }
+  const res = await detectLabels(canvas, settings, names, only, marks.length > 0);
+  if (!marks.length) return res;
+  const inside = (b: Box) =>
+    marks.some((m) => {
+      const ix = Math.max(0, Math.min(b.x + b.w, m.x + m.w) - Math.max(b.x, m.x));
+      const iy = Math.max(0, Math.min(b.y + b.h, m.y + m.h) - Math.max(b.y, m.y));
+      return ix * iy >= 0.5 * b.w * b.h;
+    });
+  const rest = res.boxes.filter((b) => !inside(b)).map((b) => ({ ...b, text: false }));
+  return {
+    ...res,
+    upright: res.upright || res.rotation === 0,
+    boxes: [...marks, ...rest],
+    note: `${marks.length} naamveld${marks.length === 1 ? '' : 'en'} met markeringen` + (rest.length ? `; ${res.note}` : ''),
+  };
+}
+
+async function detectLabels(canvas: HTMLCanvasElement, settings: Settings, names: string[], only: Rot[] | undefined, hasMarks: boolean): Promise<DetectResult> {
   const phrases = parsePhrases(settings);
   const W = canvas.width;
   const H = canvas.height;
@@ -151,6 +199,11 @@ export async function detectPage(
       // Staat er al veel goed leesbare tekst rechtop, dan is de pagina niet gedraaid:
       // verder draaien heeft geen zin (bespaart veel tijd).
       if (r === 0) {
+        // Markeringen gevonden: de pagina staat goed genoeg; niet gedraaid zoeken.
+        if (hasMarks) {
+          upright = true;
+          break;
+        }
         const confident = words.filter((w) => w.conf >= 85 && norm(w.text).length >= 4).length;
         if (confident >= 12) {
           upright = true;

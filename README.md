@@ -57,6 +57,11 @@ pagina, en geen namen of de oorspronkelijke bestandsnaam in de metadata (Info en
   handtekening dwars door "NAAM:") en er op die pagina verder niets gevonden is: is het hetzelfde
   gedrukte blad als bij andere leerlingen, dan wordt hun naamvak overgenomen, uitgelijnd op de
   gedrukte tekst en bijgesneden op de inkt
+- **Naamveld met markeringen** voor je eigen toetsen: twee dichte zwarte vierkantjes (5 mm)
+  linksboven en rechtsonder het naamveld. NamenWeg herkent die vorm zonder OCR en haalt alles
+  daartussen weg, ook bij slordig handschrift, een A3-afdruk of een gedraaide scan. Word-sjabloon:
+  [`public/naamveld-sjabloon.docx`](public/naamveld-sjabloon.docx) (ook te downloaden via Help in
+  de app; opnieuw maken met `node scripts/make-naamveld-docx.mjs`)
 - Tweede OCR-ronde op het onbewerkte beeld als handschrift tegen het naamlabel aan staat
 - Kopwoord (instelbaar, standaard "Coornhert" uit het schoollogo): staat dat bovenaan de pagina
   maar is het label "Naam" onleesbaar, dan komt het naamvak (en klasvak) op de plek waar het bij

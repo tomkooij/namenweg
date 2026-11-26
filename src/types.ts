@@ -93,6 +93,8 @@ export interface Settings {
   searchFileNames: boolean;
   /** Eén scan van de hele klas automatisch per leerling opdelen. */
   autoSplit: boolean;
+  /** Geprinte markeringen (zwarte vierkantjes op de hoeken van het naamveld) zoeken. */
+  detectMarkers: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -124,4 +126,5 @@ export const DEFAULT_SETTINGS: Settings = {
   showLabels: true,
   searchFileNames: true,
   autoSplit: true,
+  detectMarkers: true,
 };

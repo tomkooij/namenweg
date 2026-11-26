@@ -1042,3 +1042,138 @@ export function completeFromHeader(pages: KopPage[]): { page: KopPage; box: Omit
   }
   return added;
 }
+
+// ───────────────────────── Geprinte markeringen ─────────────────────────
+
+export interface MarkerSquare {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  /** Zijde in pixels. */
+  s: number;
+}
+
+/** Zijde van een markering in mm (zie public/naamveld-sjabloon.docx), en wat nog meetelt. */
+export const MARKER_MM = 5;
+const MARKER_MIN_MM = 3;
+const MARKER_MAX_MM = 8.5;
+
+/**
+ * Dichte zwarte vierkantjes (ca. 5 mm, wit eromheen) op de pagina: de geprinte markeringen
+ * linksboven en rechtsonder een naamveld. Geen OCR: alleen de vorm. Handschrift, opsommings-
+ * tekens, foto's en balken in een logo vallen af op maat, vierkantheid, vulling of de witte rand.
+ */
+export function findMarkerSquares(img: { data: Uint8ClampedArray | Uint8Array; width: number; height: number }, dpi: number): MarkerSquare[] {
+  const f = Math.max(1, Math.floor(dpi / 100));
+  const W = Math.floor(img.width / f);
+  const H = Math.floor(img.height / f);
+  const dark = new Uint8Array(W * H);
+  const d = img.data;
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++) {
+      let sum = 0;
+      for (let j = 0; j < f; j++)
+        for (let i = 0; i < f; i++) {
+          const k = ((y * f + j) * img.width + x * f + i) * 4;
+          sum += 0.299 * d[k] + 0.587 * d[k + 1] + 0.114 * d[k + 2];
+        }
+      if (sum / (f * f) < 110) dark[y * W + x] = 1;
+    }
+  const pxPerMm = dpi / f / 25.4;
+  const minS = MARKER_MIN_MM * pxPerMm;
+  const maxS = MARKER_MAX_MM * pxPerMm;
+  const out: MarkerSquare[] = [];
+  const seen = new Uint8Array(W * H);
+  const stack: number[] = [];
+  for (let start = 0; start < W * H; start++) {
+    if (!dark[start] || seen[start]) continue;
+    let x0 = W;
+    let y0 = H;
+    let x1 = 0;
+    let y1 = 0;
+    let n = 0;
+    seen[start] = 1;
+    stack.push(start);
+    while (stack.length) {
+      const k = stack.pop()!;
+      const x = k % W;
+      const y = (k - x) / W;
+      n++;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+      for (const nb of [x > 0 ? k - 1 : -1, x < W - 1 ? k + 1 : -1, y > 0 ? k - W : -1, y < H - 1 ? k + W : -1])
+        if (nb >= 0 && dark[nb] && !seen[nb]) {
+          seen[nb] = 1;
+          stack.push(nb);
+        }
+    }
+    const w = x1 - x0 + 1;
+    const h = y1 - y0 + 1;
+    if (w < minS || h < minS || w > maxS || h > maxS) continue;
+    if (w / h < 0.75 || w / h > 1.33 || n < 0.82 * w * h) continue;
+    // Wit eromheen: anders is het deel van iets groters (foto, tabel, logo).
+    const m = Math.max(2, Math.round(0.4 * Math.max(w, h)));
+    let ring = 0;
+    let ringDark = 0;
+    for (let y = y0 - m; y <= y1 + m; y++)
+      for (let x = x0 - m; x <= x1 + m; x++) {
+        if (x >= x0 && x <= x1 && y >= y0 && y <= y1) continue;
+        ring++;
+        if (x >= 0 && y >= 0 && x < W && y < H && dark[y * W + x]) ringDark++;
+      }
+    if (ringDark > 0.08 * ring) continue;
+    out.push({ x0: x0 * f, y0: y0 * f, x1: (x1 + 1) * f, y1: (y1 + 1) * f, s: ((w + h) / 2) * f });
+  }
+  return out;
+}
+
+/**
+ * Naamvelden uit paren markeringen: twee even grote vierkantjes op diagonale hoeken
+ * (linksboven + rechtsonder). Het veld is de rechthoek die ze samen omsluiten. Bij een 90°
+ * gedraaide scan liggen ze op de andere diagonaal (staande velden); de richting met de meeste
+ * velden wordt gebruikt.
+ */
+export function markerFields(squares: MarkerSquare[]): { rect: PxRect; vertical: boolean }[] {
+  const c = (q: MarkerSquare) => ({ x: (q.x0 + q.x1) / 2, y: (q.y0 + q.y1) / 2 });
+  const pairsFor = (anti: boolean) => {
+    const cand: { a: number; b: number; d: number }[] = [];
+    squares.forEach((A, a) =>
+      squares.forEach((B, b) => {
+        if (a === b) return;
+        const ratio = A.s / B.s;
+        if (ratio < 0.7 || ratio > 1.43) return;
+        const s = (A.s + B.s) / 2;
+        const dx = c(B).x - c(A).x;
+        const dy = c(B).y - c(A).y;
+        // A is de bovenste; gewone diagonaal: B rechtsonder, andere diagonaal: B linksonder.
+        if (dy < 1.5 * s || dy > 60 * s || Math.abs(dx) < 1.5 * s || Math.abs(dx) > 60 * s) return;
+        if (anti ? dx > 0 : dx < 0) return;
+        // Een naamveld is liggend (breder dan hoog); bij een 90° gedraaide scan staand. Zo
+        // worden twee rechtsonder-hoeken van velden onder elkaar niet aan elkaar gekoppeld.
+        if (anti ? Math.abs(dx) > dy : Math.abs(dx) < dy) return;
+        cand.push({ a, b, d: Math.hypot(dx, dy) });
+      }),
+    );
+    cand.sort((p, q) => p.d - q.d);
+    const used = new Set<number>();
+    const out: { rect: PxRect; vertical: boolean }[] = [];
+    for (const p of cand) {
+      if (used.has(p.a) || used.has(p.b)) continue;
+      used.add(p.a);
+      used.add(p.b);
+      const A = squares[p.a];
+      const B = squares[p.b];
+      const rect = { x0: Math.min(A.x0, B.x0), y0: Math.min(A.y0, B.y0), x1: Math.max(A.x1, B.x1), y1: Math.max(A.y1, B.y1) };
+      out.push({ rect, vertical: rect.y1 - rect.y0 > rect.x1 - rect.x0 });
+    }
+    return out;
+  };
+  // De richting met de meeste velden wint (bij een gedraaide scan kan een "verkeerd" paar
+  // over twee velden heen toevallig liggend zijn).
+  const main = pairsFor(false);
+  const anti = pairsFor(true);
+  return anti.length > main.length ? anti : main;
+}
