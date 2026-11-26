@@ -119,13 +119,17 @@ let lastExport: ExportResult[] = [];
 /** Extra namen om te zoeken (bijv. een klassenlijst). Alleen in het geheugen, nooit opgeslagen. */
 let extraNames = '';
 
+/** Woorden uit een lijst met namen (één per regel, of gescheiden door komma's/puntkomma's). */
+const nameTokens = (text: string) => text.split(/[\n,;]+/).flatMap((line) => nameTokensFromFileName(line.trim() + '.x', S));
+
+/**
+ * Namen die de detectie overal op de pagina zoekt (bestandsnaam + "Extra namen" uit de
+ * instellingen). Bewust NIET de leerlinglijst uit het koppelvenster: met een hele klas zoekt de
+ * (ruime) vergelijking dan ook naar gewone woorden ("Noor" ≈ "voor", "Bram" ≈ "gram").
+ */
 function namesFor(d: Doc): string[] {
   const own = S.searchFileNames ? nameTokensFromFileName(d.name, S) : [];
-  const extra = [extraNames, ...rosterNames()]
-    .join('\n')
-    .split(/[\n,;]+/)
-    .flatMap((line) => nameTokensFromFileName(line.trim() + '.x', S));
-  return [...new Set([...own, ...extra])];
+  return [...new Set([...own, ...nameTokens(extraNames)])];
 }
 
 type Snap = { doc: Doc; page: number; boxes: Box[] };
@@ -2236,7 +2240,9 @@ function forbiddenTokens(d: Doc) {
     .split(/[\s_\-.,()]+/)
     .map(norm)
     .filter((t) => t.length >= 4 && !/^\d+$/.test(t) && !['scan', 'toets', 'kandidaat'].includes(t))
-    .concat(namesFor(d));
+    .concat(namesFor(d))
+    // De leerlinglijst wel bij de controle: geen enkele naam in metadata of bladwijzers.
+    .concat(nameTokens(rosterNames().join('\n')));
 }
 
 async function exportAll(list?: Doc[]) {
