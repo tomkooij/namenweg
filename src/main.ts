@@ -564,6 +564,9 @@ function applySplitEdit(list: Doc[], starts: number[], how: string, log: string[
 
 const SR_SIZE_KEY = 'namenweg.splitsvenster.grootte';
 const SR_FULL_KEY = 'namenweg.splitsvenster.vol';
+const SR_SHOW_KEY = 'namenweg.splitsvenster.weergave';
+/** vakken = scan met de weg te halen vakken erover; uitvoer = zoals de export; origineel = alleen de scan. */
+type SrShow = 'vakken' | 'uitvoer' | 'origineel';
 function srPref(key: string, def: string) {
   try {
     return localStorage.getItem(key) ?? def;
@@ -613,6 +616,14 @@ function openSplitReview(list: Doc[], initial?: number[], onDone?: () => void) {
 
   // ── Beeld: scherper renderen, pas als de pagina in beeld komt ──
   let size = Math.max(80, Math.min(900, Number(srPref(SR_SIZE_KEY, '320')) || 320));
+  let show: SrShow = (['vakken', 'uitvoer', 'origineel'] as const).find((m) => m === srPref(SR_SHOW_KEY, 'vakken')) ?? 'vakken';
+  /** Vervangende tekst voor pagina i, volgens de huidige indeling (rij = kandidaat). */
+  const textFor = (i: number) => {
+    const k = groupOf(i);
+    return k < nums.length ? fillTemplate(S.template, nums[k]) : S.template.replace(/\{n+\}/g, '?');
+  };
+  /** Beste beeld dat al klaarstaat per pagina en weergave (voorkomt flikkeren bij opnieuw opbouwen). */
+  const best = new Map<string, { url: string; dpi: number }>();
   const TIERS = [20, 40, 70, 110, 160];
   const tierFor = (hPx: number, i: number) => {
     const need = (hPx * (window.devicePixelRatio || 1)) / (pages[i].hPt / 72);
@@ -620,14 +631,16 @@ function openSplitReview(list: Doc[], initial?: number[], onDone?: () => void) {
   };
   const imgCache = new Map<string, string>();
   let alive = true;
-  async function imageFor(i: number, dpi: number): Promise<string | undefined> {
-    const key = `${i}:${dpi}`;
+  /** Pagina i op `dpi`; met `redact` (de vervangende tekst) precies zoals in de export. */
+  async function imageFor(i: number, dpi: number, redact?: string): Promise<string | undefined> {
+    const key = `${i}:${dpi}:${redact ?? ''}`;
     const hit = imgCache.get(key);
     if (hit) return hit;
     const { d, j } = where[i];
     if (!d.src) return pages[i].thumb;
     try {
       const c = await d.src.render(j, dpi, true);
+      if (redact !== undefined) applyRedactions(c, pages[i].boxes, redact, S);
       const url = c.toDataURL('image/jpeg', 0.82);
       release(c);
       imgCache.set(key, url);
@@ -648,11 +661,17 @@ function openSplitReview(list: Doc[], initial?: number[], onDone?: () => void) {
       if (!img.isConnected) continue;
       // Hoogte waarop deze afbeelding getoond wordt (ingezoomde rij is groter).
       const dpi = tierFor(Number(img.dataset.h) || size, i);
-      if (img.dataset.dpi && Number(img.dataset.dpi) >= dpi) continue;
-      const url = await imageFor(i, dpi);
+      const redact = show === 'uitvoer' ? textFor(i) : undefined;
+      const mode = redact === undefined ? 'scan' : `uit:${redact}`;
+      if (img.dataset.mode === mode && Number(img.dataset.dpi) >= dpi) continue;
+      const url = await imageFor(i, dpi, redact);
       if (url && img.isConnected) {
         img.src = url;
         img.dataset.dpi = String(dpi);
+        img.dataset.mode = mode;
+        img.parentElement?.classList.toggle('done', mode !== 'scan');
+        const b = best.get(`${i}|${mode}`);
+        if (!b || b.dpi < dpi) best.set(`${i}|${mode}`, { url, dpi });
       }
     }
     pumping = false;
@@ -737,24 +756,45 @@ function openSplitReview(list: Doc[], initial?: number[], onDone?: () => void) {
         const isF = k === focusK;
         // Voorblad midden in de rij: daar begint waarschijnlijk een andere leerling.
         const innerVb = Array.from({ length: len - 1 }, (_, j) => first + 1 + j).filter(voorblad);
-        const warnRow = (k > 0 && !voorblad(first)) || innerVb.length > 0;
+        const rowPages = pages.slice(first, first + len);
+        const nBox = rowPages.reduce((a, p) => a + p.boxes.length, 0);
+        // Geen naamvak bij deze kandidaat: dan blijft de naam waarschijnlijk staan!
+        const noName = !rowPages.some((p) => p.boxes.some((bx) => bx.kind === 'naam' || bx.text));
+        const warnRow = (k > 0 && !voorblad(first)) || innerVb.length > 0 || noName;
         const items: HTMLElement[] = [];
         for (let i = first; i < first + len; i++) {
           if (i > first)
             items.push(el('button', { class: 'sr-cut', title: `Hier splitsen: pagina ${i + 1} wordt het begin van een nieuwe kandidaat`, 'aria-label': `Splitsen vóór pagina ${i + 1}`, onclick: () => toggle(i) }, '✂'));
           const p = pages[i];
-          const img = el('img', { src: p.thumb ?? '', alt: `Pagina ${i + 1}`, draggable: 'false', 'data-i': String(i), 'data-h': String(isF ? bigH : zoomed ? SMALL : size) }) as HTMLImageElement;
+          const mode = show === 'uitvoer' ? `uit:${textFor(i)}` : 'scan';
+          const ready = best.get(`${i}|${mode}`);
+          const img = el('img', { src: ready?.url ?? p.thumb ?? '', alt: `Pagina ${i + 1}`, draggable: 'false', 'data-i': String(i), 'data-h': String(isF ? bigH : zoomed ? SMALL : size) }) as HTMLImageElement;
+          if (ready) {
+            img.dataset.dpi = String(ready.dpi);
+            img.dataset.mode = mode;
+          }
           img.style.aspectRatio = `${p.wPt} / ${p.hPt}`;
+          // De vakken die weggehaald worden, over de scan heen.
+          const boxesEl = el(
+            'div',
+            { class: 'sr-boxes' },
+            ...p.boxes.map((bx) => {
+              const e = el('div', { class: `sr-box ${bx.kind}` });
+              e.style.cssText = `left:${bx.x * 100}%;top:${bx.y * 100}%;width:${bx.w * 100}%;height:${bx.h * 100}%`;
+              return e;
+            }),
+          );
           io.observe(img);
           items.push(
             el(
               'div',
               {
-                class: 'sr-page' + (voorblad(i) || i === 0 ? ' vb' : ''),
+                class: 'sr-page' + (voorblad(i) || i === 0 ? ' vb' : '') + (ready && mode !== 'scan' ? ' done' : ''),
                 'data-i': String(i),
                 title: `Pagina ${i + 1}${naam(i) ? ' · naamvak' : ''}${voorblad(i) ? ' · zelfde blad als pagina 1' : ''}\n${isF ? 'Klik: uitzoomen' : 'Klik: inzoomen op deze kandidaat'} · sleep naar een andere kandidaat`,
               },
               img,
+              boxesEl,
               el('span', { class: 'n' }, String(i + 1)),
               naam(i) ? el('span', { class: 'sr-naam' }, 'naam') : null,
             ),
@@ -770,6 +810,8 @@ function openSplitReview(list: Doc[], initial?: number[], onDone?: () => void) {
             el('span', { class: 'sr-label' }, label(k)),
             isF ? el('span', { class: 'sr-of' }, `kandidaat ${k + 1} van ${lengths.length}`) : null,
             el('span', {}, pagesTxt),
+            el('span', { class: 'note' }, `· ${nBox} vak${nBox === 1 ? '' : 'ken'} weg`),
+            noName ? el('span', { class: 'sr-noname' }, '⚠ geen naamvak – de naam blijft staan!') : null,
             k > 0 && !voorblad(first) ? el('span', { class: 'note warn' }, '· begint niet met een voorblad') : null,
             innerVb.length ? el('span', { class: 'note warn' }, `· bevat nog een voorblad (p. ${innerVb.map((i) => i + 1).join(', ')})`) : null,
             el('span', { class: 'spacer' }),
@@ -895,6 +937,22 @@ function openSplitReview(list: Doc[], initial?: number[], onDone?: () => void) {
     close();
     applySplitEdit(list, xs, how, analysis.log);
   };
+  const SHOWS: [SrShow, string, string][] = [
+    ['vakken', 'Vakken', 'Scan met de vakken die weggehaald worden'],
+    ['uitvoer', 'Zoals de uitvoer', 'Precies zoals het na het exporteren wordt: weggehaald en vervangen door de kandidaattekst'],
+    ['origineel', 'Origineel', 'Alleen de scan, zonder vakken'],
+  ];
+  const showBtns = SHOWS.map(([m, l, t]) => el('button', { class: 'btn small' + (show === m ? ' active' : ''), title: t, 'data-m': m, onclick: () => setShow(m) }, l));
+  function setShow(m: SrShow) {
+    show = m;
+    srSave(SR_SHOW_KEY, m);
+    for (const b of showBtns) b.classList.toggle('active', b.dataset.m === m);
+    dlg.classList.remove('m-vakken', 'm-uitvoer', 'm-origineel');
+    dlg.classList.add(`m-${m}`);
+    render();
+  }
+  dlg.classList.add(`m-${show}`);
+  dlg.style.setProperty('--sr-fill', S.fill === 'zwart' ? '#000' : '#fff');
   const fullBtn = el('button', { class: 'btn icon', title: 'Schermvullend aan/uit' }, dlg.classList.contains('full') ? '⤡' : '⤢');
   fullBtn.addEventListener('click', () => {
     const on = dlg.classList.toggle('full');
@@ -914,6 +972,8 @@ function openSplitReview(list: Doc[], initial?: number[], onDone?: () => void) {
       el(
         'div',
         { class: 'sr-tools' },
+        el('span', { class: 'seg', role: 'group', 'aria-label': 'Weergave' }, ...showBtns),
+        el('span', { class: 'sep' }),
         el('label', { class: 'inline' }, 'Grootte', sizeIn),
         el('span', { class: 'sep' }),
         'Opnieuw indelen:',
@@ -2755,7 +2815,7 @@ function openHelp(section?: string) {
       el('h3', {}, '💡 Tips'),
       el('ul', {},
         el('li', {}, 'Verwerk een hele klas tegelijk: sleep alle PDF\'s in één keer naar het venster.'),
-        el('li', {}, `Hele stapel in één PDF gescand? Staan de naamvakken op een vast ritme (bijv. elke 2e pagina) en zijn dat steeds hetzelfde voorblad, dan deelt de app de scan na de detectie automatisch per leerling op, met voor elke leerling een eigen nummer. Heeft niet elke leerling evenveel pagina's, of twijfelt de app, dan opent het (schermvullende) venster "Splitsresultaat": één rij per kandidaat. Elke kandidaat heeft een eigen kleur. Klik op een pagina om op die kandidaat in te zoomen (de kandidaat erboven en eronder blijft zichtbaar; ↑ ↓ naar een andere kandidaat, ← → bladeren, Esc uitzoomen). Sleep een pagina naar een andere kandidaat, klik op ✂ tussen twee pagina's om te splitsen of op "Samenvoegen met vorige". Met de schuifregelaar maak je de pagina's groter. Later bekijken of aanpassen: klik in de documentenlijst op het blauwe label "✂ 1 van 3 uit …", of op "✂ Splitsing bekijken" bij het document. Wil je toch één PDF? Kies na het exporteren "Eén samengevoegde PDF".`),
+        el('li', {}, `Hele stapel in één PDF gescand? Staan de naamvakken op een vast ritme (bijv. elke 2e pagina) en zijn dat steeds hetzelfde voorblad, dan deelt de app de scan na de detectie automatisch per leerling op, met voor elke leerling een eigen nummer. Heeft niet elke leerling evenveel pagina's, of twijfelt de app, dan opent het (schermvullende) venster "Splitsresultaat": één rij per kandidaat. Elke kandidaat heeft een eigen kleur. Bovenaan kies je wat je ziet: "Vakken" (de vakken die weggehaald worden), "Zoals de uitvoer" (precies het exportresultaat) of "Origineel"; een kandidaat zonder naamvak krijgt een rode waarschuwing. Klik op een pagina om op die kandidaat in te zoomen (de kandidaat erboven en eronder blijft zichtbaar; ↑ ↓ naar een andere kandidaat, ← → bladeren, Esc uitzoomen). Sleep een pagina naar een andere kandidaat, klik op ✂ tussen twee pagina's om te splitsen of op "Samenvoegen met vorige". Met de schuifregelaar maak je de pagina's groter. Later bekijken of aanpassen: klik in de documentenlijst op het blauwe label "✂ 1 van 3 uit …", of op "✂ Splitsing bekijken" bij het document. Wil je toch één PDF? Kies na het exporteren "Eén samengevoegde PDF".`),
         el('li', {}, 'Ook losse scans als JPG of PNG worden ondersteund.'),
         el('li', {}, 'Bestanden te groot? Kies in ☰ Menu → Instellingen een lagere resolutie of grijswaarden.'),
       ),

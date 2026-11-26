@@ -1490,3 +1490,59 @@ dialog.sr .dbody {
   width: 100%;
   margin-top: 8px;
 }
+
+/* Splitsvenster: vakken die weggehaald worden */
+.sr-boxes {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  border-radius: 3px;
+}
+.sr-box {
+  position: absolute;
+  border: 2px solid var(--c);
+  background: color-mix(in srgb, var(--c) 28%, transparent);
+}
+.sr-box.naam {
+  --c: var(--naam);
+}
+.sr-box.nummer {
+  --c: var(--nummer);
+}
+.sr-box.klas {
+  --c: var(--klas);
+}
+.sr-box.handmatig {
+  --c: var(--handmatig);
+}
+dialog.sr.m-origineel .sr-boxes {
+  display: none;
+}
+/* Zoals de uitvoer: tot het echte resultaat er is, de vakken alvast dicht (geen naam zichtbaar). */
+dialog.sr.m-uitvoer .sr-page:not(.done) .sr-box {
+  border: 0;
+  background: var(--sr-fill, #fff);
+}
+dialog.sr.m-uitvoer .sr-page.done .sr-boxes {
+  display: none;
+}
+.sr-noname {
+  color: var(--err);
+  font-weight: 700;
+}
+.seg {
+  display: inline-flex;
+}
+.seg .btn {
+  border-radius: 0;
+}
+.seg .btn:first-child {
+  border-radius: 6px 0 0 6px;
+}
+.seg .btn:last-child {
+  border-radius: 0 6px 6px 0;
+}
+.seg .btn + .btn {
+  margin-left: -1px;
+}
