@@ -53,3 +53,32 @@ describe('vangnet kopwoord', () => {
     expect(adds.every((x) => x.box.y < 0.2)).toBe(true);
   });
 });
+
+describe('kopstrook', () => {
+  // A4 staand op 200 dpi.
+  const A4 = { W: 1654, H: 2339 };
+  it('hele breedte, van de bovenrand tot onder het invulblok', async () => {
+    const { kopStrip } = await import('../../src/detect-core');
+    const r = kopStrip({ x: 0.145, y: 0.065, w: 0.207, h: 0.02 }, A4.W, A4.H)!;
+    expect(r.x0).toBe(0);
+    expect(r.x1).toBe(A4.W);
+    expect(r.y0).toBe(0);
+    expect(r.y1 / A4.H).toBeGreaterThan(0.14);
+    expect(r.y1 / A4.H).toBeLessThan(0.17);
+  });
+  it('loopt door tot onder een vak dat in de strook begint', async () => {
+    const { kopStrip } = await import('../../src/detect-core');
+    const r = kopStrip({ x: 0.145, y: 0.065, w: 0.207, h: 0.02 }, A4.W, A4.H, [{ x: 0.77, y: 0.12, w: 0.2, h: 0.06, kind: 'klas' }])!;
+    expect(r.y1 / A4.H).toBeCloseTo(0.185, 2);
+  });
+  it('liggend (twee A4 naast elkaar): alleen de helft met het logo', async () => {
+    const { kopStrip } = await import('../../src/detect-core');
+    const r = kopStrip({ x: 0.57, y: 0.06, w: 0.1, h: 0.015 }, 3307, 2339)!;
+    expect(r.x0).toBe(3307 / 2);
+    expect(r.x1).toBe(3307);
+  });
+  it('niet als het kopwoord ergens in de tekst staat', async () => {
+    const { kopStrip } = await import('../../src/detect-core');
+    expect(kopStrip({ x: 0.2, y: 0.5, w: 0.2, h: 0.02 }, A4.W, A4.H)).toBeUndefined();
+  });
+});

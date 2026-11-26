@@ -10,7 +10,7 @@ import type { Box, Rot, Settings } from './types';
 import { recognize, type OcrWord } from './ocr';
 import { rotateCanvas } from './pdfio';
 import { uid } from './util';
-import { type DetectResult, findKop, findMarkerSquares, findNameWords, findLabels, kopWords, markerFields, InkMask, mergeBoxes, norm, parsePhrases, printedAnchors, printedWords, regionsFor, unrotate } from './detect-core';
+import { type DetectResult, findKop, findMarkerSquares, findNameWords, findLabels, kopStrip, kopWords, markerFields, InkMask, mergeBoxes, norm, parsePhrases, printedAnchors, printedWords, regionsFor, unrotate } from './detect-core';
 
 export { norm };
 export type { DetectResult };
@@ -112,7 +112,41 @@ export async function detectPage(canvas: HTMLCanvasElement, settings: Settings, 
         } as Box;
       });
   }
-  const res = await detectLabels(canvas, settings, names, only, marks.length > 0);
+  // Eerst het logo: een snelle OCR-ronde op alleen de bovenste kwart van de pagina, onbewerkt
+  // (de voorbewerking laat de lichtgrijze logotekst op ruitjes- of lijntjespapier verdwijnen).
+  let kop: DetectResult['kop'];
+  const kw = kopWords(settings);
+  // Alleen in de rechtop-ronde (niet in de achtergrondronde voor gedraaide pagina's).
+  if (kw.length && (!only || only.includes(0))) {
+    const top = document.createElement('canvas');
+    top.width = W;
+    top.height = Math.round(H * 0.25);
+    top.getContext('2d')!.drawImage(canvas, 0, 0);
+    const k = findKop(await recognize(top), kw, W, top.height);
+    top.width = top.height = 0;
+    if (k) kop = { x: k.x, y: (k.y * Math.round(H * 0.25)) / H, w: k.w, h: (k.h * Math.round(H * 0.25)) / H };
+  }
+  const res0 = await detectLabels(canvas, settings, names, only, marks.length > 0 || !!kop);
+  const res = { ...res0, kop: kop ?? res0.kop };
+  if (settings.kopStrook && res.kop) {
+    const r = kopStrip(res.kop, W, H, res.boxes);
+    if (r)
+      marks.unshift({
+        id: uid(),
+        x: r.x0 / W,
+        y: r.y0 / H,
+        w: (r.x1 - r.x0) / W,
+        h: (r.y1 - r.y0) / H,
+        kind: 'naam',
+        source: 'auto',
+        rot: 0,
+        text: true,
+        label: 'kopstrook',
+        ax: r.x0 / W,
+        ay: r.y0 / H,
+      } as Box);
+    marks.forEach((m, i) => (m.text = i === 0));
+  }
   if (!marks.length) return res;
   const inside = (b: Box) =>
     marks.some((m) => {
@@ -125,7 +159,13 @@ export async function detectPage(canvas: HTMLCanvasElement, settings: Settings, 
     ...res,
     upright: res.upright || res.rotation === 0,
     boxes: [...marks, ...rest],
-    note: `${marks.length} naamveld${marks.length === 1 ? '' : 'en'} met markeringen` + (rest.length ? `; ${res.note}` : ''),
+    note:
+      [
+        marks.some((m) => m.label === 'kopstrook') ? 'bovenkant weg (logo)' : '',
+        marks.filter((m) => m.label === 'markering').length ? `${marks.filter((m) => m.label === 'markering').length} naamveld(en) met markeringen` : '',
+      ]
+        .filter(Boolean)
+        .join(', ') + (rest.length ? `; ${res.note}` : ''),
   };
 }
 

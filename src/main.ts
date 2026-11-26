@@ -2788,7 +2788,7 @@ function openSettings() {
   color.addEventListener('input', () => (draft.textColor = color.value));
 
   const save = () => {
-    const oldKw = [S.kwNaam, S.kwNummer, S.kwKlas, S.kwStop, S.kwKop, S.detectMarkers, S.detectKlas, S.detectNummer, S.searchRotated, S.padding, S.ocrDpi].join('|');
+    const oldKw = [S.kwNaam, S.kwNummer, S.kwKlas, S.kwStop, S.kwKop, S.kopStrook, S.detectMarkers, S.detectKlas, S.detectNummer, S.searchRotated, S.padding, S.ocrDpi].join('|');
     const namesChanged = extraNames !== namesArea.value;
     extraNames = namesArea.value;
     Object.assign(S, draft);
@@ -2797,7 +2797,7 @@ function openSettings() {
     setWorkerCount(S.ocrWorkers);
     dlg.close();
     renderAll();
-    const newKw = [S.kwNaam, S.kwNummer, S.kwKlas, S.kwStop, S.kwKop, S.detectMarkers, S.detectKlas, S.detectNummer, S.searchRotated, S.padding, S.ocrDpi].join('|');
+    const newKw = [S.kwNaam, S.kwNummer, S.kwKlas, S.kwStop, S.kwKop, S.kopStrook, S.detectMarkers, S.detectKlas, S.detectNummer, S.searchRotated, S.padding, S.ocrDpi].join('|');
     if ((oldKw !== newKw || namesChanged) && docs.length) toast('Detectie-instellingen gewijzigd. Kies ☰ Menu → "Alles opnieuw detecteren" om ze toe te passen.');
   };
 
@@ -2827,6 +2827,7 @@ function openSettings() {
         check('autoDetect', 'Automatisch detecteren na het toevoegen van bestanden'),
         check('detectNummer', 'Examen-/leerlingnummer verwijderen'),
         check('detectKlas', 'Klas verwijderen'),
+        check('kopStrook', 'Bij een kopwoord (logo) bovenaan: de hele bovenkant weghalen', 'Staat het kopwoord (bijv. "Coornhert" uit het logo) bovenaan, dan gaat alles van de bovenrand tot onder het invulblok weg, over de volle breedte (bij twee A4\'s naast elkaar: de helft met het logo).'),
         check('detectMarkers', 'Naamvelden met geprinte markeringen herkennen', 'Twee zwarte vierkantjes (ca. 5 mm) linksboven en rechtsonder het naamveld: alles daartussen wordt weggehaald, ook als "Naam" onleesbaar is. Sjabloon: zie Help.'),
         check('searchFileNames', 'Ook zoeken naar de naam uit de bestandsnaam, overal op de pagina', 'Heet het bestand bijv. "jansen piet.pdf", dan worden de woorden "jansen" en "piet" overal op de pagina gezocht (werkt het best bij duidelijk schrift).'),
         namesField,

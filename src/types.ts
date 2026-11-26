@@ -95,6 +95,8 @@ export interface Settings {
   autoSplit: boolean;
   /** Geprinte markeringen (zwarte vierkantjes op de hoeken van het naamveld) zoeken. */
   detectMarkers: boolean;
+  /** Staat het kopwoord (logo) bovenaan: de hele bovenkant van de pagina weghalen. */
+  kopStrook: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -118,7 +120,7 @@ export const DEFAULT_SETTINGS: Settings = {
   kwNaam: 'naam, naam kandidaat, kandidaat, naam leerling, achternaam, voornaam, name, kandidaatnaam, leerlingnaam, student',
   kwNummer: 'examen no, examen nr, examen, examennummer, kandidaat nr, kandidaatnummer, leerling nr, leerlingnummer, llnr, lln nr, studentnummer, student nr, exam no, candidate number',
   kwKlas: 'klas, groep, stamgroep, class',
-  kwKop: 'coornhert',
+  kwKop: 'coornhert, gymnasium',
   kwStop: 'examenvak, vak, datum, date, docent, blad, pagina, cijfer, score, school, gymnasium, coornhert, toets, onderwerp, niveau',
   detectNummer: true,
   detectKlas: true,
@@ -127,4 +129,5 @@ export const DEFAULT_SETTINGS: Settings = {
   searchFileNames: true,
   autoSplit: true,
   detectMarkers: true,
+  kopStrook: true,
 };

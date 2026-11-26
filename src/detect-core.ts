@@ -1184,3 +1184,30 @@ export function markerFields(squares: MarkerSquare[]): { rect: PxRect; vertical:
   const anti = pairsFor(true);
   return anti.length > main.length ? anti : main;
 }
+
+/**
+ * Kopstrook: staat het kopwoord (logo) bovenaan, dan gaat de hele bovenkant weg: van de
+ * bovenrand tot iets onder het invulblok naast het logo (0,65 × de breedte van het kopwoord
+ * onder de bovenkant ervan, of verder als daar nog een gevonden vak doorloopt). Over de volle
+ * breedte; bij een liggende pagina (twee A4's naast elkaar) alleen de helft met het logo.
+ * Alles in pixels van de pagina. undefined als het kopwoord niet bovenaan staat.
+ */
+export function kopStrip(kop: { x: number; y: number; w: number; h: number }, W: number, H: number, boxes: { x: number; y: number; w: number; h: number; kind: BoxKind }[] = []): PxRect | undefined {
+  if (kop.y > 0.25) return undefined;
+  const kw = kop.w * W;
+  let y1 = kop.y * H + 0.65 * kw;
+  const landscape = W > H;
+  const right = kop.x + kop.w / 2 > 0.5;
+  const x0 = landscape && right ? W / 2 : 0;
+  const x1 = landscape && !right ? W / 2 : W;
+  // Vakken (naam/nummer/klas) die in de strook beginnen, horen bij het invulblok: meenemen.
+  for (const b of boxes) {
+    if (b.kind === 'handmatig') continue;
+    const top = b.y * H;
+    const bottom = (b.y + b.h) * H;
+    const cx = (b.x + b.w / 2) * W;
+    if (top < y1 && bottom > y1 && bottom < 0.3 * H && cx >= x0 && cx <= x1) y1 = bottom;
+  }
+  y1 = Math.min(H, y1 + 0.005 * H);
+  return { x0, y0: 0, x1, y1 };
+}

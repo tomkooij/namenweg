@@ -63,6 +63,10 @@ pagina, en geen namen of de oorspronkelijke bestandsnaam in de metadata (Info en
   [`public/naamveld-sjabloon.docx`](public/naamveld-sjabloon.docx) (ook te downloaden via Help in
   de app; opnieuw maken met `node scripts/make-naamveld-docx.mjs`)
 - Tweede OCR-ronde op het onbewerkte beeld als handschrift tegen het naamlabel aan staat
+- **Kopstrook:** eerst zoekt een snelle OCR-ronde op de bovenste kwart van de pagina (onbewerkt,
+  zodat het ook op ruitjes- en lijntjespapier lukt) naar het kopwoord uit het logo. Staat het er,
+  dan gaat de hele bovenkant weg, van de bovenrand tot onder het invulblok, over de volle breedte
+  (bij twee A4's naast elkaar: de helft met het logo). Uit te zetten in Instellingen
 - Kopwoord (instelbaar, standaard "Coornhert" uit het schoollogo): staat dat bovenaan de pagina
   maar is het label "Naam" onleesbaar, dan komt het naamvak (en klasvak) op de plek waar het bij
   andere leerlingen naast het kopwoord gevonden is; zonder voorbeeld op de standaardplek van het
