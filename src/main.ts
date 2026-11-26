@@ -9,6 +9,7 @@ import { applyRedactions, exportDocument, verifyOutput, combineDocuments, type V
 import { el, uid, uniqueNumber, fillTemplate, safeFileName, download, toCsv, fmtBytes } from './util';
 import { openMatcher, matchState, matchChip, rosterNames, studentById } from './match';
 import { UNK } from './roster';
+import { openQuickFix } from './quickfix';
 
 // ───────────────────────── State ─────────────────────────
 
@@ -225,6 +226,8 @@ const btnRenumber = mi('🎲 Alle nummers opnieuw', renumberAll, 'Geef alle docu
 const btnOverview = el('button', { class: 'btn', onclick: () => openOverview(), title: "Alle pagina's in één overzicht controleren" }, '🔎 Controle-overzicht');
 const btnMatch = el('button', { class: 'btn', onclick: () => startMatcher(), title: 'Koppel elke toets aan een leerling uit de leerlinglijst (CSV/Excel); de koppeling komt in het sleutelbestand' }, '👥 Leerlingen koppelen');
 const miMatch = mi('👥 Leerlingen koppelen…', () => startMatcher(), 'Toetsen koppelen aan een leerlinglijst (CSV/Excel)');
+const quickFix = () => openQuickFix(S, (m) => toast(m));
+const miQuick = mi('✏️ Snel wissen in een PDF…', quickFix, 'Iets gemist in een geëxporteerde PDF? Vak tekenen en opslaan, zonder tekstherkenning of splitsen');
 const btnTemplates = mi('📐 Sjablonen…', () => openTemplates(), 'Vaklayout opslaan of toepassen');
 const btnClear = mi('🗑 Alles wissen', clearAll, '', 'danger');
 
@@ -248,6 +251,8 @@ app.append(
     el('div', { class: 'spacer' }),
     el('button', { class: 'btn', onclick: () => openHelp() }, '❓ Help'),
     menu('main', '☰ Menu', 'Meer opties', [
+      miQuick,
+      el('hr'),
       menuHead('Alle documenten'),
       btnDetectAll,
       btnTemplates,
@@ -1817,6 +1822,13 @@ function emptyState() {
         }, 'een hele klas in één PDF'),
         '.',
       ),
+      el(
+        'p',
+        { class: 'note', style: 'margin-bottom:0' },
+        'Iets gemist in een al geëxporteerde PDF? ',
+        el('button', { class: 'linkbtn', onclick: quickFix }, '✏️ Snel wissen'),
+        ': open de PDF, trek een vak en sla op – zonder tekstherkenning of splitsen.',
+      ),
     ),
   );
 }
@@ -2291,7 +2303,7 @@ function showExportDialog(results: ExportResult[]) {
   };
   const downloadCombined = async () => {
     const sorted = [...results].sort((a, b) => a.doc.num - b.doc.num);
-    const bytes = await combineDocuments(sorted.map((r) => r.bytes));
+    const bytes = await combineDocuments(sorted.map((r) => ({ bytes: r.bytes, title: docText(r.doc) })));
     download(bytes, 'toetsen-geanonimiseerd (samengevoegd).pdf', 'application/pdf');
   };
   dlg.append(
@@ -2889,6 +2901,8 @@ function openHelp(section?: string) {
         el('li', {}, 'Staat iemand niet op de lijst? Typ de naam en druk Shift+Enter om de leerling toe te voegen, of Ctrl+Enter voor "niet in lijst / onleesbaar".'),
         el('li', {}, 'De kandidaatnummers blijven willekeurig. Wie wie is, staat alleen in het sleutelbestand (met leerlingnummer en klas, en de leerlingen zonder toets). De lijst wordt niet opgeslagen; de namen worden wel gebruikt om de export te controleren.'),
       ),
+      el('h3', {}, '✏️ Snel wissen'),
+      el('p', {}, 'Toch nog iets gemist in een geëxporteerde PDF? Kies ☰ Menu → "Snel wissen in een PDF" (of open de app met ?snelwissen achter het adres). Open de PDF, trek met de muis een vak over wat weg moet (Shift = strook over de volle breedte) en sla op. Er is geen tekstherkenning en er wordt niets gesplitst. Elke kandidaat staat op een eigen rij, dankzij de bladwijzers die NamenWeg in elke export zet (ook in de samengevoegde PDF). Alleen pagina\'s met een nieuw vak worden opnieuw opgebouwd; de rest gaat ongewijzigd mee.'),
       el('h3', {}, '🗝 Sleutelbestand'),
       el('p', {}, 'Wil je later terugvinden wie "Kandidaat 67" was, download dan het sleutelbestand (CSV). Daarin staat welk nummer bij welk origineel bestand hoort. Bewaar dit bestand apart en veilig.'),
       el('h3', {}, '💡 Tips'),
@@ -3023,6 +3037,9 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
     check(240);
   }
 }
+
+// ?snelwissen (of #snelwissen): meteen het venster "Snel wissen" openen.
+if (/[?&#]snelwissen\b/.test(location.search + location.hash)) quickFix();
 
 // Alleen tijdens ontwikkeling: ?demo=bestand1.pdf,bestand2.pdf laadt bestanden uit de lokale map scans/.
 if (import.meta.env.DEV) {

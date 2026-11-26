@@ -2,10 +2,11 @@
 // pixels van de persoonsgegevens zijn overschreven. De nieuwe PDF bevat ALLEEN die
 // afbeeldingen: geen originele beeldlagen, geen tekstlaag, geen metadata, geen bestandsnaam.
 import { PDFDocument } from 'pdf-lib';
-import type { Box, PageState, Settings } from './types';
+import type { Box, PageState, Rect, Settings } from './types';
 import type { Source } from './pdfio';
-import { openPdfBytes, release } from './pdfio';
-import { OPS } from 'pdfjs-dist';
+import { openPdfBytes, readOutline, release } from './pdfio';
+import { addOutline, type OutlineEntry } from './outline';
+import { OPS, type PDFDocumentProxy } from 'pdfjs-dist';
 
 export function drawFittedText(ctx: CanvasRenderingContext2D, text: string, b: { x: number; y: number; w: number; h: number }, rot: number, color: string) {
   const cx = b.x + b.w / 2;
@@ -111,36 +112,44 @@ export async function exportDocument(
   let done = 0;
   for (const p of pages) {
     const canvas = await renderRedacted(src, p, s.exportDpi, text, s);
-    let jpg: Uint8Array;
-    if (s.jpegQuality > 0) jpg = await canvasToJpeg(canvas, s.jpegQuality);
-    else {
-      // Automatisch: hoogste kwaliteit die ongeveer binnen de grootte van het origineel blijft.
-      const target = targetBytesPerPage ? targetBytesPerPage * 1.25 : Infinity;
-      jpg = await canvasToJpeg(canvas, 0.8);
-      for (const q of [0.7, 0.6, 0.5, 0.42]) {
-        if (jpg.length <= target) break;
-        jpg = await canvasToJpeg(canvas, q);
-      }
-    }
+    const jpg = await encodePage(canvas, s, targetBytesPerPage);
     release(canvas);
     const img = await pdf.embedJpg(jpg);
     const page = pdf.addPage([p.wPt, p.hPt]);
     page.drawImage(img, { x: 0, y: 0, width: p.wPt, height: p.hPt });
     progress(++done, pages.length);
   }
+  // Bladwijzer: ook na samenvoegen (of in "Snel wissen") is te zien waar deze kandidaat begint.
+  addOutline(pdf, [{ title: text, page: 0 }]);
   pdf.setTitle(text);
   pdf.setProducer('NamenWeg');
   pdf.setCreator('NamenWeg');
   return pdf.save({ useObjectStreams: true });
 }
 
-export async function combineDocuments(parts: Uint8Array[]): Promise<Uint8Array> {
+/** JPEG van een pagina; bij automatische kwaliteit ongeveer zo groot als het origineel. */
+async function encodePage(canvas: HTMLCanvasElement, s: Settings, targetBytesPerPage = 0) {
+  if (s.jpegQuality > 0) return canvasToJpeg(canvas, s.jpegQuality);
+  const target = targetBytesPerPage ? targetBytesPerPage * 1.25 : Infinity;
+  let jpg = await canvasToJpeg(canvas, 0.8);
+  for (const q of [0.7, 0.6, 0.5, 0.42]) {
+    if (jpg.length <= target) break;
+    jpg = await canvasToJpeg(canvas, q);
+  }
+  return jpg;
+}
+
+/** Geëxporteerde toetsen samenvoegen tot één PDF, met een bladwijzer per kandidaat. */
+export async function combineDocuments(parts: { bytes: Uint8Array; title: string }[]): Promise<Uint8Array> {
   const out = await PDFDocument.create({ updateMetadata: false });
-  for (const bytes of parts) {
+  const outline: OutlineEntry[] = [];
+  for (const { bytes, title } of parts) {
     const d = await PDFDocument.load(bytes);
+    outline.push({ title, page: out.getPageCount() });
     const pages = await out.copyPages(d, d.getPageIndices());
     pages.forEach((p) => out.addPage(p));
   }
+  addOutline(out, outline);
   out.setTitle('Geanonimiseerde toetsen');
   out.setProducer('NamenWeg');
   out.setCreator('NamenWeg');
@@ -181,6 +190,74 @@ export async function verifyOutput(bytes: Uint8Array, forbidden: string[], expec
     ok: hits.length === 0,
     msg: hits.length === 0 ? 'Geen namen of bestandsnaam in de metadata' : `Gevonden in metadata: ${hits.join(', ')}`,
   });
+  // Bladwijzers mogen alleen de vervangende tekst bevatten.
+  const outline = await readOutline(pdf);
+  if (outline.length) {
+    const titles = outline.map((o) => o.title.toLowerCase()).join(' ');
+    const bad = forbidden.filter((f) => f.length >= 3 && titles.includes(f));
+    checks.push({
+      ok: bad.length === 0,
+      msg: bad.length === 0 ? `Inhoudsopgave: ${outline.length} bladwijzer${outline.length === 1 ? '' : 's'}, zonder namen` : `Gevonden in de inhoudsopgave: ${bad.join(', ')}`,
+    });
+  }
   await pdf.loadingTask.destroy();
   return { ok: checks.every((c) => c.ok), checks };
+}
+
+/** Is deze pagina al "schoon": alleen één afbeelding, geen tekst en geen opmerkingen? */
+export async function pageIsClean(pdf: PDFDocumentProxy, index: number) {
+  const page = await pdf.getPage(index + 1);
+  if ((await page.getTextContent()).items.length) return false;
+  if ((await page.getAnnotations()).length) return false;
+  const ops = await page.getOperatorList();
+  const imgs = ops.fnArray.filter((f) => f === OPS.paintImageXObject || f === OPS.paintXObject || f === OPS.paintInlineImageXObject).length;
+  return imgs === 1;
+}
+
+/**
+ * Snel wissen: alleen pagina's met nieuwe vakken (of die niet "schoon" zijn) worden opnieuw
+ * opgebouwd als afbeelding; de andere pagina's gaan ongewijzigd mee. De bladwijzers blijven.
+ */
+export async function patchPdf(
+  bytes: Uint8Array,
+  pdf: PDFDocumentProxy,
+  src: Source,
+  boxes: Rect[][],
+  outline: OutlineEntry[],
+  s: Settings,
+  progress: (done: number, total: number) => void = () => {},
+): Promise<{ bytes: Uint8Array; rebuilt: number }> {
+  const n = src.numPages;
+  let input: PDFDocument | null = null;
+  try {
+    input = await PDFDocument.load(bytes, { updateMetadata: false });
+  } catch {
+    input = null; // bijv. versleuteld: dan alles opnieuw opbouwen
+  }
+  const out = await PDFDocument.create({ updateMetadata: false });
+  const target = bytes.length / Math.max(1, n);
+  let rebuilt = 0;
+  for (let i = 0; i < n; i++) {
+    const own = boxes[i] ?? [];
+    if (!own.length && input && (await pageIsClean(pdf, i))) {
+      const [p] = await out.copyPages(input, [i]);
+      out.addPage(p);
+    } else {
+      const canvas = await src.render(i, s.exportDpi);
+      applyRedactions(canvas, own.map((r) => ({ ...r, id: '', kind: 'handmatig', source: 'handmatig', rot: 0, text: false })), null, s);
+      if (s.grayscale) toGray(canvas);
+      const jpg = await encodePage(canvas, s, target);
+      release(canvas);
+      const img = await out.embedJpg(jpg);
+      const { w, h } = src.sizes[i];
+      out.addPage([w, h]).drawImage(img, { x: 0, y: 0, width: w, height: h });
+      rebuilt++;
+    }
+    progress(i + 1, n);
+  }
+  addOutline(out, outline);
+  out.setTitle(outline.length === 1 ? outline[0].title : 'Geanonimiseerde toetsen');
+  out.setProducer('NamenWeg');
+  out.setCreator('NamenWeg');
+  return { bytes: await out.save({ useObjectStreams: true }), rebuilt };
 }

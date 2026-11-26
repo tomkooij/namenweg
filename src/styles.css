@@ -2351,3 +2351,64 @@ dialog.mt.loading .mt-prog,
 dialog.mt.loading .mt-tools {
   visibility: hidden;
 }
+
+/* ───────── Snel wissen: vakken tekenen in een geëxporteerde PDF ───────── */
+dialog.qf .sr-page {
+  cursor: crosshair;
+}
+dialog.qf .qf-boxes {
+  overflow: visible;
+}
+.qf-x {
+  pointer-events: auto;
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 0;
+  background: var(--err);
+  color: #fff;
+  font-size: 13px;
+  line-height: 18px;
+  padding: 0;
+  cursor: pointer;
+  display: none;
+}
+dialog.qf .sr-page:hover .qf-x {
+  display: block;
+}
+dialog.qf.m-uitvoer .qf-x {
+  display: none !important;
+}
+.qf-ghost {
+  border-style: dashed;
+}
+.qf-pick {
+  display: grid;
+  place-items: center;
+  min-height: 60vh;
+}
+.qf-pick .card {
+  max-width: 580px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 24px 28px;
+  box-shadow: var(--shadow);
+}
+.qf-pick h3 {
+  margin: 0 0 6px;
+}
+.qf-drop {
+  display: block;
+  width: 100%;
+  padding: 28px 14px;
+  margin-top: 10px;
+  background: none;
+  font: inherit;
+}
+.qf-foot {
+  align-self: center;
+}

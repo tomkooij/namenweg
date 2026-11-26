@@ -33,8 +33,11 @@ export async function openPdfBytes(bytes: Uint8Array): Promise<PDFDocumentProxy>
 }
 
 async function openPdf(file: File): Promise<Source> {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const pdf = await openPdfBytes(bytes);
+  return pdfSource(await openPdfBytes(new Uint8Array(await file.arrayBuffer())));
+}
+
+/** Bron voor een al geopende PDF. */
+export async function pdfSource(pdf: PDFDocumentProxy): Promise<Source> {
   const sizes: { w: number; h: number }[] = [];
   for (let i = 1; i <= pdf.numPages; i++) {
     const p = await pdf.getPage(i);
@@ -90,6 +93,26 @@ async function openImage(file: File): Promise<Source> {
       bmp.close();
     },
   };
+}
+
+/**
+ * De inhoudsopgave (bladwijzers) van een PDF: titel en pagina (0-based), op volgorde van pagina.
+ * NamenWeg zet daarin waar elke kandidaat begint.
+ */
+export async function readOutline(pdf: PDFDocumentProxy): Promise<{ title: string; page: number }[]> {
+  const items = (await pdf.getOutline().catch(() => null)) ?? [];
+  const out: { title: string; page: number }[] = [];
+  for (const it of items) {
+    try {
+      const dest = typeof it.dest === 'string' ? await pdf.getDestination(it.dest) : it.dest;
+      const ref = dest?.[0];
+      const page = typeof ref === 'number' ? ref : ref ? await pdf.getPageIndex(ref) : -1;
+      if (page >= 0) out.push({ title: it.title, page });
+    } catch {
+      /* kapotte bladwijzer: overslaan */
+    }
+  }
+  return out.sort((a, b) => a.page - b.page);
 }
 
 export function isSupported(file: File) {

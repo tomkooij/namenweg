@@ -89,7 +89,15 @@ pagina, en geen namen of de oorspronkelijke bestandsnaam in de metadata (Info en
 - Willekeurige, unieke kandidaatnummers (niet herleidbaar uit de volgorde)
 - Instelbare vervangende tekst (`Kandidaat {n}`), kleur, hoekstempel op elke pagina
 - Voorbeeldweergave van het resultaat
-- Export per document, als ZIP of als één samengevoegde PDF
+- Export per document, als ZIP of als één samengevoegde PDF; elke kandidaat krijgt een bladwijzer
+  (inhoudsopgave) op zijn eerste pagina, ook in de samengevoegde PDF – met alleen "Kandidaat 67",
+  nooit een naam
+- **✏️ Snel wissen** (☰ Menu, het startscherm, of direct via `?snelwissen`): iets gemist in een al
+  geëxporteerde PDF? Open hem, trek met de muis een vak (Shift = strook over de volle breedte) en
+  sla op. Geen tekstherkenning en geen splitsen. De weergave lijkt op het splitsvenster: één rij per
+  kandidaat, gelezen uit de bladwijzers; klik om in te zoomen. Alleen pagina's met een nieuw vak
+  worden opnieuw opgebouwd (écht weggehaald); de andere pagina's gaan ongewijzigd mee, tenzij ze
+  nog tekst of meer dan één afbeelding bevatten. Daarna volgt dezelfde automatische controle
 - Optioneel sleutelbestand (CSV) om later terug te vinden wie wie was – blijft op je computer
 - **Leerlingen koppelen** aan een leerlinglijst (CSV of Excel .xlsx, ook exports met losse kolommen
   Roepnaam/Tussenvoegsel/Achternaam, Leerlingnummer en Klas): per toets zie je de naamvakken uit de
