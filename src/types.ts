@@ -46,6 +46,15 @@ export interface PageState {
    * hetzelfde blad zijn. Alleen in het geheugen.
    */
   printed?: string[];
+  /** Posities van die gedrukte woorden (genormaliseerd), om bladen uit te lijnen. */
+  printedPos?: PrintedAnchor[];
+}
+
+/** Goed leesbaar gedrukt woord met zijn plek op de pagina (midden, 0..1). */
+export interface PrintedAnchor {
+  t: string;
+  x: number;
+  y: number;
 }
 
 export interface Settings {

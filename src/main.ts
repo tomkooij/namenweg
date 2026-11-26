@@ -3,7 +3,7 @@ import { zipSync } from 'fflate';
 import { DEFAULT_SETTINGS, type Box, type BoxKind, type PageState, type Rot, type Settings } from './types';
 import { openFile, isSupported, release, withRotation, type Source } from './pdfio';
 import { detectPage, norm } from './detect';
-import { analyzeClassSplit, completeFromPeers, printedSimilarity, SAME_SHEET, InkMask, nameTokensFromFileName, refineWithInk } from './detect-core';
+import { analyzeClassSplit, completeFromPeers, completeFromSameSheet, isNameHit, printedSimilarity, SAME_SHEET, InkMask, nameTokensFromFileName, refineWithInk } from './detect-core';
 import { setWorkerCount, defaultWorkerCount, onOcrStatus } from './ocr';
 import { applyRedactions, exportDocument, verifyOutput, combineDocuments, type VerifyResult } from './redact';
 import { el, uid, uniqueNumber, fillTemplate, safeFileName, download, toCsv, fmtBytes } from './util';
@@ -1183,7 +1183,7 @@ async function runDetect(doc: Doc, p: PageState, phase: Phase) {
       if (res.boxes.length && !p.boxes.length) {
         p.boxes = [...p.boxes, ...res.boxes];
         if (!p.boxes.some((b) => b.text)) {
-          const t = p.boxes.find((b) => b.kind === 'naam');
+          const t = p.boxes.find((b) => b.kind === 'naam' && !isNameHit(b));
           if (t) t.text = true;
         }
         p.detectNote = res.note;
@@ -1219,12 +1219,13 @@ async function runDetect(doc: Doc, p: PageState, phase: Phase) {
     p.rotChecked = !!res.upright || res.boxes.length > 0;
     p.boxes = [...p.boxes.filter((b) => b.source === 'handmatig'), ...res.boxes];
     if (!p.boxes.some((b) => b.text)) {
-      const t = p.boxes.find((b) => b.kind === 'naam');
+      const t = p.boxes.find((b) => b.kind === 'naam' && !isNameHit(b));
       if (t) t.text = true;
     }
     p.detect = 'klaar';
     p.detectNote = res.note;
     p.printed = res.printed;
+    p.printedPos = res.printedPos;
   } catch (e) {
     p.detect = 'fout';
     p.detectNote = 'Fout bij detectie: ' + (e instanceof Error ? e.message : String(e));
@@ -1252,8 +1253,24 @@ async function runDetect(doc: Doc, p: PageState, phase: Phase) {
  * door de OCR gemist werden, worden aangevuld en daarna aangepast aan de inkt op deze pagina.
  */
 async function completeMissing(): Promise<number> {
-  const pages = docs.filter((d) => d.status === 'klaar').flatMap((d) => d.pages);
-  const adds = completeFromPeers(pages);
+  const pages = () => docs.filter((d) => d.status === 'klaar').flatMap((d) => d.pages);
+  // Eerst op basis van vakken op dezelfde pagina elders; daarna (met die vakken erbij) op basis
+  // van hetzelfde gedrukte blad, voor bladen met maar één label.
+  let added = await addCompleted(completeFromPeers(pages()));
+  added += await addCompleted(completeFromSameSheet(pages()));
+  if (added) {
+    renderDocList();
+    renderStrip();
+    renderToolbar();
+    renderOverlay();
+    renderInspector();
+    refreshPreview();
+  }
+  return added;
+}
+
+/** Afgeleide vakken bijsnijden op de inkt en toevoegen (lege vakken niet). */
+async function addCompleted(adds: { page: unknown; box: Omit<Box, 'id'> }[]): Promise<number> {
   let added = 0;
   for (const { page: pg, box } of adds) {
     const doc = docs.find((d) => (d.pages as unknown[]).includes(pg));
@@ -1271,16 +1288,8 @@ async function completeMissing(): Promise<number> {
     if (!refined) continue; // leeg: niets te verbergen
     added++;
     p.boxes.push({ ...box, ...refined, id: uid() });
-    p.detectNote = (p.detectNote ?? '') + ` + ${KIND_LABEL[box.kind].toLowerCase()} aangevuld (afgeleid van andere pagina's)`;
+    p.detectNote = (p.detectNote ?? '') + ` + ${KIND_LABEL[box.kind].toLowerCase()} aangevuld (${box.label?.startsWith('zelfde blad') ? 'zelfde blad als bij andere leerlingen' : "afgeleid van andere pagina's"})`;
     doc.exported = false;
-  }
-  if (added) {
-    renderDocList();
-    renderStrip();
-    renderToolbar();
-    renderOverlay();
-    renderInspector();
-    refreshPreview();
   }
   return added;
 }

@@ -53,9 +53,14 @@ pagina, en geen namen of de oorspronkelijke bestandsnaam in de metadata (Info en
   ook bij lichtgrijze, gerasterde voorgedrukte labels
 - Vakken groeien mee met het handschrift en met invulhokjes onder een label
 - Vangnet: mist de OCR een label op één pagina, dan wordt het vak aangevuld op basis van
-  dezelfde kop op andere pagina's/documenten
+  dezelfde kop op andere pagina's/documenten. Ook als het label onleesbaar is (bijv. een
+  handtekening dwars door "NAAM:") en er op die pagina verder niets gevonden is: is het hetzelfde
+  gedrukte blad als bij andere leerlingen, dan wordt hun naamvak overgenomen, uitgelijnd op de
+  gedrukte tekst en bijgesneden op de inkt
+- Tweede OCR-ronde op het onbewerkte beeld als handschrift tegen het naamlabel aan staat
 - Zoekt de naam uit de bestandsnaam (bijv. `jansen piet.pdf`) ook elders op de pagina, net als
-  een optionele namenlijst (bijv. de hele klas; wordt nooit opgeslagen)
+  een optionele namenlijst (bijv. de hele klas; wordt nooit opgeslagen). Korte namen (< 5
+  letters) alleen exact, langere met één tikfout; zo'n losse treffer krijgt geen vervangende tekst
 - Tweede OCR-ronde zonder gekleurde inkt als handschrift het naamlabel onleesbaar maakt
 - Werkt ook op gedraaide pagina's (bijv. liggende uitwerkbijlagen)
 - Controle-overzicht: van elke pagina een uitsnede van het eindresultaat in één scherm

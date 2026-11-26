@@ -1,5 +1,5 @@
 // Kern van de detectie zonder afhankelijkheid van de browser (testbaar in Node).
-import type { Box, BoxKind, Rot, Settings } from './types';
+import type { Box, BoxKind, PrintedAnchor, Rot, Settings } from './types';
 
 export interface OcrWord {
   text: string;
@@ -50,6 +50,8 @@ export interface DetectResult {
   upright?: boolean;
   /** Vingerafdruk van de rechtop gelezen gedrukte tekst (zie printedWords). */
   printed?: string[];
+  /** Plekken van die woorden (zie printedAnchors). */
+  printedPos?: PrintedAnchor[];
   boxes: Box[];
   note: string;
   rotation: Rot;
@@ -521,7 +523,8 @@ export interface PeerPage {
  */
 export function completeFromPeers(pages: PeerPage[], tol = 0.03): { page: PeerPage; box: Omit<Box, 'id'> }[] {
   const added: { page: PeerPage; box: Omit<Box, 'id'> }[] = [];
-  const auto = (p: PeerPage) => p.boxes.filter((b) => b.source === 'auto' && b.kind !== 'handmatig');
+  // Losse naamtreffers zijn geen betrouwbaar ankerpunt (kunnen overal op de pagina staan).
+  const auto = (p: PeerPage) => p.boxes.filter((b) => b.source === 'auto' && b.kind !== 'handmatig' && !isNameHit(b));
   const sameShape = (a: PeerPage, b: PeerPage) => Math.abs(a.wPt / a.hPt - b.wPt / b.hPt) < 0.02;
   for (const q of pages) {
     const qa = auto(q);
@@ -655,7 +658,10 @@ export function findNameWords(words: OcrWord[], names: string[]): { rect: PxRect
     if (n.length < 3 || w.conf < 45) continue;
     const hit = names.some((name) => {
       if (n === name) return true;
-      const max = name.length >= 7 ? 2 : 1;
+      // Tikfouten alleen bij langere woorden: korte namen lijken te veel op gewone woorden
+      // ("Noor" ≈ "voor", "Daan" ≈ "dan").
+      if (name.length < 5 || n.length < 5) return false;
+      const max = name.length >= 9 ? 2 : 1;
       return Math.abs(n.length - name.length) <= max && lev(n, name, max) <= max;
     });
     if (!hit) continue;
@@ -843,4 +849,100 @@ export function printedSimilarity(a?: string[], b?: string[]): number | null {
   if (!a || !b || Math.min(a.length, b.length) < MIN_PRINTED) return null;
   const set = new Set(a);
   return b.filter((w) => set.has(w)).length / Math.min(a.length, b.length);
+}
+
+/** Vak van een losse naamtreffer (bestandsnaam / namenlijst), niet bij een gedrukt label. */
+export const isNameHit = (b: Pick<Box, 'label'>) => !!b.label?.startsWith('gezochte naam');
+
+/**
+ * Plekken van de goed leesbare gedrukte woorden (zie printedWords): alleen woorden die één keer
+ * op de pagina staan, zodat ze bij een ander exemplaar van hetzelfde blad terug te vinden zijn.
+ */
+export function printedAnchors(words: OcrWord[], W: number, H: number): PrintedAnchor[] {
+  const ok = words.filter((w) => w.conf >= 85).map((w) => ({ t: norm(w.text), w })).filter(({ t }) => t.length >= 4 && !/\d/.test(t));
+  const count = new Map<string, number>();
+  for (const { t } of ok) count.set(t, (count.get(t) ?? 0) + 1);
+  return ok.filter(({ t }) => count.get(t) === 1).map(({ t, w }) => ({ t, x: (w.x0 + w.x1) / 2 / W, y: (w.y0 + w.y1) / 2 / H }));
+}
+
+/** Verschuiving van blad a naar blad b op basis van gedeelde gedrukte woorden (of null). */
+export function sheetOffset(a?: PrintedAnchor[], b?: PrintedAnchor[]): { dx: number; dy: number } | null {
+  if (!a?.length || !b?.length) return null;
+  const pos = new Map(a.map((p) => [p.t, p]));
+  const d = b.filter((q) => pos.has(q.t)).map((q) => ({ dx: q.x - pos.get(q.t)!.x, dy: q.y - pos.get(q.t)!.y }));
+  if (d.length < 3) return null;
+  const med = (v: number[]) => [...v].sort((x, y) => x - y)[Math.floor((v.length - 1) / 2)];
+  const dx = med(d.map((v) => v.dx));
+  const dy = med(d.map((v) => v.dy));
+  // De meeste woorden moeten met dezelfde verschuiving kloppen (anders: ander blad of scheef).
+  const fit = d.filter((v) => Math.abs(v.dx - dx) < 0.012 && Math.abs(v.dy - dy) < 0.012).length;
+  return fit >= Math.max(3, 0.6 * d.length) ? { dx, dy } : null;
+}
+
+export interface SheetPage extends PeerPage {
+  printed?: string[];
+  printedPos?: PrintedAnchor[];
+  /** Door de gebruiker gecontroleerd: niets meer aanvullen. */
+  checked?: boolean;
+}
+
+/**
+ * Vangnet op basis van "zelfde blad": is bij een ander exemplaar van hetzelfde gedrukte blad
+ * (bijv. het voorblad van een andere leerling) een naam-, nummer- of klasvak bij een gedrukt
+ * label gevonden, en ontbreekt dat vak hier (label onleesbaar door handschrift erdoorheen), dan
+ * wordt het overgenomen, verschoven met de gedrukte tekst. Anders dan completeFromPeers is er
+ * op deze pagina zelf geen ander vak als ankerpunt nodig. Het resultaat moet daarna nog op de
+ * inkt bijgesneden worden (refineWithInk): een leeg vak wordt niet toegevoegd.
+ */
+export function completeFromSameSheet(pages: SheetPage[]): { page: SheetPage; box: Omit<Box, 'id'> }[] {
+  const added: { page: SheetPage; box: Omit<Box, 'id'> }[] = [];
+  const sameShape = (a: PeerPage, b: PeerPage) => Math.abs(a.wPt / a.hPt - b.wPt / b.hPt) < 0.02;
+  /** Vakken die echt bij een gelezen label horen (niet afgeleid, geen losse naamtreffer). */
+  const fromLabel = (p: SheetPage) => p.boxes.filter((b) => b.source === 'auto' && b.ax !== undefined && b.kind !== 'handmatig' && !isNameHit(b));
+  for (const q of pages) {
+    if (q.checked) continue;
+    const collected = new Map<BoxKind, { x0: number; y0: number; x1: number; y1: number; rot: Rot }[]>();
+    for (const p of pages) {
+      if (p === q || !sameShape(p, q)) continue;
+      const src = fromLabel(p);
+      if (!src.length) continue;
+      if ((printedSimilarity(p.printed, q.printed) ?? 0) < SAME_SHEET) continue;
+      const off = sheetOffset(p.printedPos, q.printedPos);
+      if (!off) continue;
+      for (const b of src) {
+        // Alleen soorten die hier nog niet bij een label gevonden zijn.
+        if (q.boxes.some((x) => x.kind === b.kind && !isNameHit(x))) continue;
+        const r = { x: b.x + off.dx, y: b.y + off.dy, w: b.w, h: b.h };
+        if (q.boxes.some((x) => !isNameHit(x) && overlapArea(x, r) > 0.3 * r.w * r.h)) continue;
+        const list = collected.get(b.kind) ?? [];
+        list.push({ x0: r.x, y0: r.y, x1: r.x + r.w, y1: r.y + r.h, rot: b.rot });
+        collected.set(b.kind, list);
+      }
+    }
+    const median = (a: number[]) => [...a].sort((x, y) => x - y)[Math.floor((a.length - 1) / 2)];
+    for (const [kind, list] of collected) {
+      // Horizontaal de vereniging (namen verschillen in lengte), verticaal de mediaan.
+      const r = { x0: Math.min(...list.map((v) => v.x0)), x1: Math.max(...list.map((v) => v.x1)), y0: median(list.map((v) => v.y0)), y1: median(list.map((v) => v.y1)) };
+      if (r.x1 - r.x0 > 0.45 || r.y1 - r.y0 > 0.25) continue;
+      const mx = (r.x1 - r.x0) * 0.08;
+      const my = (r.y1 - r.y0) * 0.15;
+      const x0 = Math.max(0, r.x0 - mx);
+      const y0 = Math.max(0, r.y0 - my);
+      added.push({
+        page: q,
+        box: {
+          x: x0,
+          y: y0,
+          w: Math.min(1, r.x1 + mx) - x0,
+          h: Math.min(1, r.y1 + my) - y0,
+          kind,
+          source: 'auto',
+          rot: list[0].rot,
+          text: kind === 'naam' && !q.boxes.some((b) => b.text),
+          label: `zelfde blad als ${list.length} andere pagina('s)`,
+        },
+      });
+    }
+  }
+  return added;
 }

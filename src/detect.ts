@@ -10,7 +10,7 @@ import type { Box, Rot, Settings } from './types';
 import { recognize, type OcrWord } from './ocr';
 import { rotateCanvas } from './pdfio';
 import { uid } from './util';
-import { type DetectResult, findNameWords, findLabels, InkMask, mergeBoxes, norm, parsePhrases, printedWords, regionsFor, unrotate } from './detect-core';
+import { type DetectResult, findNameWords, findLabels, InkMask, mergeBoxes, norm, parsePhrases, printedAnchors, printedWords, regionsFor, unrotate } from './detect-core';
 
 export { norm };
 export type { DetectResult };
@@ -129,17 +129,21 @@ export async function detectPage(
     if (r === 0) words0 = words;
     let labels = findLabels(words, phrases);
     // Andere labels gevonden maar geen naamlabel? Dan stoort het handschrift ernaast vaak de
-    // OCR. Tweede ronde zonder gekleurde inkt, alleen om labels te vinden.
+    // OCR. Tweede ronde zonder gekleurde inkt, alleen om labels te vinden: eerst op het
+    // onbewerkte beeld (het vervagen van enhanceForOcr laat handschrift dat tegen het label aan
+    // staat ermee versmelten), en alleen als dat niets oplevert ook voorbewerkt (lichtgrijze,
+    // gerasterde labels).
     if (labels.length && !labels.some((l) => l.kind === 'naam')) {
       const clean = dropColoredInk(c);
-      const enh2 = enhanceForOcr(clean, settings.ocrDpi);
+      const addNew = (found: typeof labels) =>
+        found.filter((l) => !labels.some((o) => o.kind === l.kind && Math.abs(o.x0 - l.x0) < 3 * (l.y1 - l.y0) && Math.abs(o.y0 - l.y0) < 2 * (l.y1 - l.y0)));
+      labels = [...labels, ...addNew(findLabels(await recognize(clean), phrases))];
+      if (!labels.some((l) => l.kind === 'naam')) {
+        const enh2 = enhanceForOcr(clean, settings.ocrDpi);
+        labels = [...labels, ...addNew(findLabels(await recognize(enh2), phrases))];
+        enh2.width = enh2.height = 0;
+      }
       clean.width = clean.height = 0;
-      const words2 = await recognize(enh2);
-      enh2.width = enh2.height = 0;
-      const extra = findLabels(words2, phrases).filter(
-        (l) => !labels.some((o) => o.kind === l.kind && Math.abs(o.x0 - l.x0) < 3 * (l.y1 - l.y0) && Math.abs(o.y0 - l.y0) < 2 * (l.y1 - l.y0)),
-      );
-      labels = [...labels, ...extra];
     }
     const personal = labels.filter((l) => l.kind !== 'stop');
     if (!personal.length) {
@@ -189,6 +193,7 @@ export async function detectPage(
     return {
       upright: r === 0,
       printed: r === 0 ? printedWords(words0) : undefined,
+      printedPos: r === 0 ? printedAnchors(words0, W, H) : undefined,
       boxes,
       rotation: r,
       labels: personal.map((l) => l.text),
@@ -198,9 +203,9 @@ export async function detectPage(
     };
   }
   const extra = nameBoxes(words0, 0, []);
+  // Losse naamtreffers krijgen geen vervangende tekst: die hoort bij een echt naamvak.
   if (extra.length) {
-    extra[0].text = true;
-    return { upright, printed: printedWords(words0), boxes: extra, rotation: 0, labels: [], note: `Geen labels, wel ${extra.length}× een gezochte naam gevonden` };
+    return { upright, printed: printedWords(words0), printedPos: printedAnchors(words0, W, H), boxes: extra, rotation: 0, labels: [], note: `Geen labels, wel ${extra.length}× een gezochte naam gevonden` };
   }
-  return { upright, printed: printedWords(words0), boxes: [], rotation: 0, labels: [], note: 'Geen labels gevonden' };
+  return { upright, printed: printedWords(words0), printedPos: printedAnchors(words0, W, H), boxes: [], rotation: 0, labels: [], note: 'Geen labels gevonden' };
 }
