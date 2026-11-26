@@ -1327,6 +1327,20 @@ function docChips(d: Doc) {
         },
       }, `✂ ${d.splitSuggest.length + 1} toetsen? Bekijken`),
     );
+  if (d.splitInfo) {
+    // Deel van een gesplitste scan: één klik naar de splitsweergave.
+    const g = splitGroup(d);
+    chips.push(
+      el('button', {
+        class: 'chip split act',
+        title: `Deel van "${d.splitInfo.from}". Klik om de splitsing te bekijken of aan te passen.`,
+        onclick: (e: Event) => {
+          e.stopPropagation();
+          openSplitReview(g);
+        },
+      }, `✂ ${g.indexOf(d) + 1} van ${g.length} uit ${d.splitInfo.from}`),
+    );
+  }
   if (d.exported) chips.push(el('span', { class: 'chip ok' }, '✓ geëxporteerd'));
   return chips;
 }
@@ -1955,9 +1969,16 @@ function renderInspector() {
         numNote,
       ),
       el('div', { class: 'note' }, 'Vervangende tekst: ', el('strong', {}, docText(d))),
+      d.splitInfo
+        ? el(
+            'button',
+            { class: 'btn small split-btn', onclick: () => openSplitReview(splitGroup(d)), title: `Deel van "${d.splitInfo.from}": splitsing bekijken of aanpassen` },
+            `✂ Splitsing bekijken (${splitGroup(d).length} kandidaten)`,
+          )
+        : null,
       more('doc', 'Meer documentacties',
         el('button', { class: 'btn small', onclick: () => exportAll([d]) }, '⬇ Alleen dit document exporteren'),
-        el('button', { class: 'btn small', onclick: () => openSplitReview(splitGroup(d), d.splitSuggest), disabled: splitGroup(d).reduce((a, x) => a + x.pages.length, 0) < 2, title: 'Eén scan met meerdere leerlingen opdelen, of een splitsing bekijken en aanpassen' }, d.splitInfo ? '✂ Splitsing bekijken/aanpassen…' : '✂ Splitsen…'),
+        d.splitInfo ? null : el('button', { class: 'btn small', onclick: () => openSplitReview([d], d.splitSuggest), disabled: d.pages.length < 2, title: 'Eén scan met meerdere leerlingen opdelen' }, '✂ Splitsen…'),
         el(
           'button',
           {
@@ -2734,7 +2755,7 @@ function openHelp(section?: string) {
       el('h3', {}, '💡 Tips'),
       el('ul', {},
         el('li', {}, 'Verwerk een hele klas tegelijk: sleep alle PDF\'s in één keer naar het venster.'),
-        el('li', {}, `Hele stapel in één PDF gescand? Staan de naamvakken op een vast ritme (bijv. elke 2e pagina) en zijn dat steeds hetzelfde voorblad, dan deelt de app de scan na de detectie automatisch per leerling op, met voor elke leerling een eigen nummer. Heeft niet elke leerling evenveel pagina's, of twijfelt de app, dan opent het (schermvullende) venster "Splitsresultaat": één rij per kandidaat. Elke kandidaat heeft een eigen kleur. Klik op een pagina om op die kandidaat in te zoomen (de kandidaat erboven en eronder blijft zichtbaar; ↑ ↓ naar een andere kandidaat, ← → bladeren, Esc uitzoomen). Sleep een pagina naar een andere kandidaat, klik op ✂ tussen twee pagina's om te splitsen of op "Samenvoegen met vorige". Met de schuifregelaar maak je de pagina's groter. Later aanpassen kan via "✂ Splitsing bekijken/aanpassen…" onder "Meer documentacties". Wil je toch één PDF? Kies na het exporteren "Eén samengevoegde PDF".`),
+        el('li', {}, `Hele stapel in één PDF gescand? Staan de naamvakken op een vast ritme (bijv. elke 2e pagina) en zijn dat steeds hetzelfde voorblad, dan deelt de app de scan na de detectie automatisch per leerling op, met voor elke leerling een eigen nummer. Heeft niet elke leerling evenveel pagina's, of twijfelt de app, dan opent het (schermvullende) venster "Splitsresultaat": één rij per kandidaat. Elke kandidaat heeft een eigen kleur. Klik op een pagina om op die kandidaat in te zoomen (de kandidaat erboven en eronder blijft zichtbaar; ↑ ↓ naar een andere kandidaat, ← → bladeren, Esc uitzoomen). Sleep een pagina naar een andere kandidaat, klik op ✂ tussen twee pagina's om te splitsen of op "Samenvoegen met vorige". Met de schuifregelaar maak je de pagina's groter. Later bekijken of aanpassen: klik in de documentenlijst op het blauwe label "✂ 1 van 3 uit …", of op "✂ Splitsing bekijken" bij het document. Wil je toch één PDF? Kies na het exporteren "Eén samengevoegde PDF".`),
         el('li', {}, 'Ook losse scans als JPG of PNG worden ondersteund.'),
         el('li', {}, 'Bestanden te groot? Kies in ☰ Menu → Instellingen een lagere resolutie of grijswaarden.'),
       ),
