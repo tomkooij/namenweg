@@ -10,7 +10,7 @@ import type { Box, Rot, Settings } from './types';
 import { recognize, type OcrWord } from './ocr';
 import { rotateCanvas } from './pdfio';
 import { uid } from './util';
-import { type DetectResult, findKop, findMarkerSquares, findNameWords, findLabels, headerBlockStrip, kopStrip, kopWords, markerFields, InkMask, mergeBoxes, norm, parsePhrases, printedAnchors, printedWords, regionsFor, unrotate } from './detect-core';
+import { type DetectResult, looksLikeLabel, findKop, findMarkerSquares, findNameWords, findLabels, findSlimBoxes, headerBlockStrip, kopStrip, type PxRect, kopWords, markerFields, InkMask, mergeBoxes, norm, parsePhrases, printedAnchors, printedWords, regionsFor, unrotate } from './detect-core';
 
 export { norm };
 export type { DetectResult };
@@ -77,9 +77,10 @@ export function enhanceForOcr(src: HTMLCanvasElement, dpi: number): HTMLCanvasEl
 
 
 /**
- * Het logo zoeken: een snelle OCR-ronde op alleen de bovenste kwart van de pagina, onbewerkt
- * (de voorbewerking laat de lichtgrijze logotekst op ruitjes- of lijntjespapier verdwijnen).
- * Geeft het kopwoord (genormaliseerd t.o.v. de hele pagina) en de gelezen woorden.
+ * Bovenkant lezen: een snelle OCR-ronde op alleen de bovenste kwart van de pagina, onbewerkt
+ * (de voorbewerking laat lichtgrijze logotekst op ruitjes- of lijntjespapier verdwijnen). Zoekt,
+ * afhankelijk van de instellingen, het kopwoord (logo), het invulblok (Naam: + Vak:/Datum:/…) en
+ * slanke naamkaders. Alles in pixels van de hele pagina.
  */
 async function readTop(canvas: HTMLCanvasElement, settings: Settings) {
   const W = canvas.width;
@@ -87,122 +88,130 @@ async function readTop(canvas: HTMLCanvasElement, settings: Settings) {
   const top = document.createElement('canvas');
   top.width = W;
   top.height = Math.round(H * 0.25);
-  top.getContext('2d')!.drawImage(canvas, 0, 0);
+  const tctx = top.getContext('2d', { willReadFrequently: true })!;
+  tctx.drawImage(canvas, 0, 0);
   const words = await recognize(top);
   const f = top.height / H;
-  // Invulblok herkend aan de labels (Naam + Vak/Datum/Klas/...), voor als het logo niet gelezen wordt.
-  const block = headerBlockStrip(words, W, H);
-  const k = findKop(words, kopWords(settings), W, top.height);
+  const mm = settings.ocrDpi / 25.4;
+  const block = settings.kopBlok ? headerBlockStrip(words, W, H) : undefined;
+  // Slanke kaders (op vorm); bevestigd als er "Naam"/"Klas" in staat.
+  const frames: { r: PxRect; ok: boolean; why: string }[] = [];
+  if (settings.kopKader)
+    for (const r of findSlimBoxes(tctx.getImageData(0, 0, W, top.height), settings.ocrDpi).sort((a, b) => a.y0 - b.y0)) {
+      const pad = 3 * mm;
+      const inside = words.filter((w) => w.conf >= 40 && w.x1 > r.x0 - pad && w.x0 < r.x1 + pad && w.y1 > r.y0 - pad && w.y0 < r.y1 + pad);
+      let ok = inside.some((w) => looksLikeLabel(w.text, settings.kopKaderRuim));
+      let why = 'naamkader';
+      // Ruimer lezen: het kader zelf nog eens, vergroot en zonder gekleurde inkt (handschrift).
+      if (!ok && settings.kopKaderRuim) {
+        const c = document.createElement('canvas');
+        const sx = Math.max(0, r.x0 - pad);
+        const sy = Math.max(0, r.y0 - pad);
+        const sw = Math.min(W, r.x1 + pad) - sx;
+        const sh = Math.min(top.height, r.y1 + pad) - sy;
+        c.width = sw * 2;
+        c.height = sh * 2;
+        const cc = c.getContext('2d')!;
+        cc.imageSmoothingQuality = 'high';
+        cc.drawImage(top, sx, sy, sw, sh, 0, 0, c.width, c.height);
+        const clean = dropColoredInk(c);
+        c.width = c.height = 0;
+        ok = (await recognize(clean)).some((w) => w.conf >= 40 && looksLikeLabel(w.text, true));
+        clean.width = clean.height = 0;
+        if (ok) why = 'naamkader (extra OCR)';
+      }
+      // Alleen op vorm: zeer slank (≥ 8 : 1), zoals een naamregel; een formulekader is breder.
+      if (!ok && settings.kopKaderVorm && (r.x1 - r.x0) / (r.y1 - r.y0) >= 8) {
+        ok = true;
+        why = 'slank kader (vorm)';
+      }
+      frames.push({ r, ok, why });
+    }
+  const k = settings.kopStrook ? findKop(words, kopWords(settings), W, top.height) : undefined;
   top.width = top.height = 0;
   const kop = k ? { x: k.x, y: k.y * f, w: k.w, h: k.h * f } : undefined;
-  return { kop, words, block };
+  return { kop, words, block, frames, f };
 }
 
-/** Kopstrook als vak (vervangende tekst erin). */
-function stripBox(kop: NonNullable<DetectResult['kop']>, W: number, H: number, boxes: Box[] = []): Box | null {
-  const r = kopStrip(kop, W, H, boxes);
-  if (!r) return null;
+/** Strook (pixels) als naamvak met de vervangende tekst erin. */
+function rectBox(r: PxRect, W: number, H: number): Box {
   return { id: uid(), x: r.x0 / W, y: r.y0 / H, w: (r.x1 - r.x0) / W, h: (r.y1 - r.y0) / H, kind: 'naam', source: 'auto', rot: 0, text: true, label: 'kopstrook', ax: r.x0 / W, ay: r.y0 / H };
 }
 
-/**
- * Strategie "Logo-blokken": alleen het schoollogo zoeken en dan de hele bovenkant weghalen.
- * Geen labels, geen namen zoeken, niet gedraaid zoeken: snel en voorspelbaar.
- */
-async function detectLogoOnly(canvas: HTMLCanvasElement, settings: Settings, only?: Rot[]): Promise<DetectResult> {
+/** Geprinte markeringen als naamvakken (van boven naar beneden). */
+function markerBoxes(canvas: HTMLCanvasElement, dpi: number): Box[] {
   const W = canvas.width;
   const H = canvas.height;
-  if (only && !only.includes(0)) return { upright: true, boxes: [], rotation: 0, labels: [], note: 'Geen logo gevonden' };
-  const { kop, words, block } = await readTop(canvas, settings);
-  // Vingerafdruk van de kop (voor het splitsen van een hele klas): woorden in de bovenste kwart.
-  const f = Math.round(H * 0.25) / H;
-  const printedPos = printedAnchors(words, W, Math.round(H * 0.25)).map((p) => ({ ...p, y: p.y * f }));
-  let strip = kop ? stripBox(kop, W, H) : null;
-  // Geen logo gelezen, wel het invulblok herkend aan de labels: dan die strook.
-  const viaBlock = !strip && !!block;
-  if (!strip && block)
-    strip = { id: uid(), x: block.x0 / W, y: 0, w: (block.x1 - block.x0) / W, h: block.y1 / H, kind: 'naam', source: 'auto', rot: 0, text: true, label: 'kopstrook', ax: block.x0 / W, ay: 0 };
-  // Beide gevonden: de grootste strook (het invulblok kan lager doorlopen dan het logo).
-  else if (strip && block && block.y1 / H > strip.y + strip.h) strip.h = block.y1 / H;
-  return {
-    upright: true,
-    printed: printedWords(words),
-    printedPos,
-    kop,
-    boxes: strip ? [strip] : [],
-    rotation: 0,
-    labels: strip ? ['logo'] : [],
-    note: strip ? (viaBlock ? 'Invulblok gevonden (Naam, Vak/Datum/Klas): bovenkant weg' : 'Logo gevonden: bovenkant weg') : kop ? 'Logo gevonden, maar niet bovenaan: niets weggehaald' : 'Geen logo of invulblok gevonden',
-  };
+  const img = canvas.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, W, H);
+  // Iets marge: de vierkantjes zelf en een paar pixels eromheen verdwijnen ook.
+  const pad = (0.6 * dpi) / 25.4;
+  return markerFields(findMarkerSquares(img, dpi))
+    .sort((a, b) => a.rect.y0 - b.rect.y0 || a.rect.x0 - b.rect.x0)
+    .map((g) => {
+      const x0 = Math.max(0, g.rect.x0 - pad);
+      const y0 = Math.max(0, g.rect.y0 - pad);
+      const x1 = Math.min(W, g.rect.x1 + pad);
+      const y1 = Math.min(H, g.rect.y1 + pad);
+      return { id: uid(), x: x0 / W, y: y0 / H, w: (x1 - x0) / W, h: (y1 - y0) / H, kind: 'naam', source: 'auto', rot: g.vertical ? 90 : 0, text: false, label: 'markering', ax: x0 / W, ay: y0 / H } as Box;
+    });
 }
 
 /**
- * Detectie van één pagina. Strategie "logo": alleen de kopstrook bij het schoollogo. Strategie
- * "volledig": geprinte markeringen (vorm, zonder OCR), het logo en labels (OCR). Een vak tussen
- * markeringen of in de kopstrook is exact; vakken van labels die erbinnen vallen, vervallen.
+ * Detectie van één pagina, met de methoden die in de instellingen aan staan (de strategie
+ * bovenin is daar een voorinstelling van):
+ * - bovenkant: kopwoord (logo), invulblok (labels), slank naamkader → de hele bovenkant weg;
+ * - geprinte markeringen (vorm, zonder OCR);
+ * - labels overal op de pagina en namen uit de bestandsnaam (OCR van de hele pagina).
+ * Een vak tussen markeringen of in de kopstrook is exact; labelvakken die erbinnen vallen, vervallen.
  */
 export async function detectPage(canvas: HTMLCanvasElement, settings: Settings, names: string[] = [], only?: Rot[]): Promise<DetectResult> {
-  if (settings.strategy === 'logo') return detectLogoOnly(canvas, settings, only);
   const W = canvas.width;
   const H = canvas.height;
-  let marks: Box[] = [];
-  if (settings.detectMarkers) {
-    const img = canvas.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, W, H);
-    // Iets marge: de vierkantjes zelf en een paar pixels eromheen verdwijnen ook.
-    const pad = (0.6 * settings.ocrDpi) / 25.4;
-    // Van boven naar beneden: de vervangende tekst komt in het bovenste veld.
-    marks = markerFields(findMarkerSquares(img, settings.ocrDpi))
-      .sort((a, b) => a.rect.y0 - b.rect.y0 || a.rect.x0 - b.rect.x0)
-      .map((f, i) => {
-        const x0 = Math.max(0, f.rect.x0 - pad);
-        const y0 = Math.max(0, f.rect.y0 - pad);
-        const x1 = Math.min(W, f.rect.x1 + pad);
-        const y1 = Math.min(H, f.rect.y1 + pad);
-        return {
-          id: uid(),
-          x: x0 / W,
-          y: y0 / H,
-          w: (x1 - x0) / W,
-          h: (y1 - y0) / H,
-          kind: 'naam',
-          source: 'auto',
-          rot: f.vertical ? 90 : 0,
-          text: i === 0,
-          label: 'markering',
-          ax: x0 / W,
-          ay: y0 / H,
-        } as Box;
-      });
+  const uprightRun = !only || only.includes(0);
+  const fullOcr = settings.labels || names.length > 0;
+  const top = uprightRun && (settings.kopStrook || settings.kopBlok || settings.kopKader) ? await readTop(canvas, settings) : null;
+  const marks: Box[] = uprightRun && settings.detectMarkers ? markerBoxes(canvas, settings.ocrDpi) : [];
+  const res = fullOcr ? await detectLabels(canvas, settings, names, only, marks.length > 0 || !!(top && (top.kop || top.block || top.frames.some((x) => x.ok)))) : null;
+
+  // Bovenstroken (logo, invulblok, naamkader) samen: de ruimste.
+  const found: { r: PxRect; why: string }[] = [];
+  if (top) {
+    const k = top.kop && kopStrip(top.kop, W, H, res?.boxes ?? []);
+    if (k) found.push({ r: k, why: 'logo' });
+    if (top.block) found.push({ r: top.block, why: 'invulblok (Naam, Vak/Datum/Klas)' });
+    const fr = top.frames.find((x) => x.ok);
+    if (fr) {
+      // Van de bovenrand tot 4 mm onder het kader; bij twee A4's naast elkaar alleen die helft.
+      const mm = settings.ocrDpi / 25.4;
+      const cx = (fr.r.x0 + fr.r.x1) / 2;
+      const land = W > H;
+      found.push({ r: { x0: land && cx > W / 2 ? W / 2 : 0, y0: 0, x1: land && cx <= W / 2 ? W / 2 : W, y1: Math.min(H, fr.r.y1 + 4 * mm) }, why: fr.why });
+    }
   }
-  // Eerst het logo (alleen in de rechtop-ronde, niet in de achtergrondronde voor gedraaide pagina's).
-  let kop: DetectResult['kop'];
-  if (kopWords(settings).length && (!only || only.includes(0))) kop = (await readTop(canvas, settings)).kop;
-  const res0 = await detectLabels(canvas, settings, names, only, marks.length > 0 || !!kop);
-  const res = { ...res0, kop: kop ?? res0.kop };
-  if (settings.kopStrook && res.kop) {
-    const strip = stripBox(res.kop, W, H, res.boxes);
-    if (strip) marks.unshift(strip);
-    marks.forEach((m, i) => (m.text = i === 0));
-  }
-  if (!marks.length) return res;
+  if (found.length) marks.unshift(rectBox({ x0: Math.min(...found.map((x) => x.r.x0)), y0: 0, x1: Math.max(...found.map((x) => x.r.x1)), y1: Math.max(...found.map((x) => x.r.y1)) }, W, H));
+  marks.forEach((m, i) => (m.text = i === 0));
+
+  // Vingerafdruk van de pagina (om bladen te vergelijken, bijv. bij het splitsen).
+  const topPrinted = top ? { printed: printedWords(top.words), printedPos: printedAnchors(top.words, W, Math.round(H * 0.25)).map((p) => ({ ...p, y: p.y * top.f })) } : {};
+  const frames = top?.frames.map((x) => ({ x: x.r.x0 / W, y: x.r.y0 / H, w: (x.r.x1 - x.r.x0) / W, h: (x.r.y1 - x.r.y0) / H, ok: x.ok }));
+  const base: DetectResult = res ?? { upright: true, boxes: [], rotation: 0, labels: [], note: '', ...topPrinted };
+  const result: DetectResult = { ...base, kop: top?.kop ?? base.kop, frames, printed: base.printed ?? topPrinted.printed, printedPos: base.printedPos ?? topPrinted.printedPos };
+  if (!marks.length) return { ...result, note: res ? res.note : uprightRun ? 'Niets gevonden bovenaan' : 'Niets gevonden' };
   const inside = (b: Box) =>
     marks.some((m) => {
       const ix = Math.max(0, Math.min(b.x + b.w, m.x + m.w) - Math.max(b.x, m.x));
       const iy = Math.max(0, Math.min(b.y + b.h, m.y + m.h) - Math.max(b.y, m.y));
       return ix * iy >= 0.5 * b.w * b.h;
     });
-  const rest = res.boxes.filter((b) => !inside(b)).map((b) => ({ ...b, text: false }));
+  const rest = (res?.boxes ?? []).filter((b) => !inside(b)).map((b) => ({ ...b, text: false }));
+  const nMark = marks.filter((m) => m.label === 'markering').length;
   return {
-    ...res,
-    upright: res.upright || res.rotation === 0,
+    ...result,
+    upright: result.upright || result.rotation === 0,
     boxes: [...marks, ...rest],
     note:
-      [
-        marks.some((m) => m.label === 'kopstrook') ? 'bovenkant weg (logo)' : '',
-        marks.filter((m) => m.label === 'markering').length ? `${marks.filter((m) => m.label === 'markering').length} naamveld(en) met markeringen` : '',
-      ]
-        .filter(Boolean)
-        .join(', ') + (rest.length ? `; ${res.note}` : ''),
+      [found.length ? `${found.map((x) => x.why).join(' + ')}: bovenkant weg` : '', nMark ? `${nMark} naamveld(en) met markeringen` : ''].filter(Boolean).join(', ') +
+      (rest.length && res ? `; ${res.note}` : ''),
   };
 }
 
@@ -252,7 +261,7 @@ async function detectLabels(canvas: HTMLCanvasElement, settings: Settings, names
     const words = await recognize(enhanced);
     enhanced.width = enhanced.height = 0;
     if (r === 0) words0 = words;
-    let labels = findLabels(words, phrases);
+    let labels = settings.labels ? findLabels(words, phrases) : [];
     // Andere labels gevonden maar geen naamlabel? Dan stoort het handschrift ernaast vaak de
     // OCR. Tweede ronde zonder gekleurde inkt, alleen om labels te vinden: eerst op het
     // onbewerkte beeld (het vervagen van enhanceForOcr laat handschrift dat tegen het label aan

@@ -1,9 +1,9 @@
 import './styles.css';
 import { zipSync } from 'fflate';
-import { DEFAULT_SETTINGS, type Box, type BoxKind, type PageState, type Rot, type Settings, type Strategy } from './types';
+import { DEFAULT_SETTINGS, METHOD_KEYS, PRESETS, strategyOf, type Box, type BoxKind, type PageState, type Rot, type Settings, type Strategy } from './types';
 import { openFile, isSupported, release, withRotation, type Source } from './pdfio';
 import { detectPage, norm } from './detect';
-import { analyzeClassSplit, completeFromHeader, completeFromPeers, completeFromSameSheet, isNameHit, printedSimilarity, SAME_SHEET, InkMask, nameTokensFromFileName, refineWithInk } from './detect-core';
+import { analyzeClassSplit, completeFromFrames, completeFromHeader, completeFromPeers, completeFromSameSheet, isNameHit, printedSimilarity, SAME_SHEET, InkMask, nameTokensFromFileName, refineWithInk } from './detect-core';
 import { setWorkerCount, defaultWorkerCount, onOcrStatus } from './ocr';
 import { applyRedactions, exportDocument, verifyOutput, combineDocuments, type VerifyResult } from './redact';
 import { el, uid, uniqueNumber, fillTemplate, safeFileName, download, toCsv, fmtBytes } from './util';
@@ -93,11 +93,17 @@ interface ExportResult {
 
 const SKEY = 'namenweg.settings.v1';
 function loadSettings(): Settings {
+  let s: Settings;
   try {
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(SKEY) || '{}') };
+    const saved = JSON.parse(localStorage.getItem(SKEY) || '{}');
+    s = { ...DEFAULT_SETTINGS, ...saved };
+    // Opgeslagen vóór de losse detectiemethoden: die volgen de gekozen strategie.
+    if (!('labels' in saved)) Object.assign(s, PRESETS[saved.strategy === 'volledig' ? 'volledig' : 'logo']);
   } catch {
-    return { ...DEFAULT_SETTINGS };
+    s = { ...DEFAULT_SETTINGS };
   }
+  s.strategy = strategyOf(s);
+  return s;
 }
 function saveSettings() {
   try {
@@ -237,18 +243,23 @@ const btnClear = mi('🗑 Alles wissen', clearAll, '', 'danger');
 
 /** Detectiestrategie: knoppen bovenin. */
 const STRATEGIES: [Strategy, string, string][] = [
-  ['logo', '🏫 Schoollogo', 'Alleen het schoollogo zoeken (kopwoord, bijv. "Coornhert") en daar de hele bovenkant weghalen: het invulblok van het antwoordblad en het kladpapier. Verder niets. Snel en voorspelbaar.'],
-  ['volledig', '🔍 Volledig', "Alles wat de app kan: het logo, labels als Naam/Klas/Examennummer, geprinte markeringen, namen uit de bestandsnaam, aanvullen op basis van andere pagina's en gedraaide pagina's. Vindt meer, maar kan ook vaker te veel weghalen."],
+  ['logo', '🏫 Schoollogo', 'Alleen de bovenkant van elke pagina: staat daar het schoollogo (bijv. "Coornhert"), het invulblok van antwoordblad/kladpapier of een slank NAAM-kader, dan gaat de hele bovenkant weg. Verder niets. Snel en voorspelbaar.'],
+  ['volledig', '🔍 Volledig', "Alles wat de app kan: de bovenkant (logo, invulblok, naamkader), labels als Naam/Klas/Examennummer overal op de pagina, geprinte markeringen, namen uit de bestandsnaam, aanvullen op basis van andere pagina's en gedraaide pagina's. Vindt meer, maar kan ook vaker te veel weghalen."],
+  ['eigen', '⚙ Eigen', 'Zelf kiezen welke detectiemethoden aan staan (opent de instellingen). Licht op als je de methoden zelf hebt aangepast.'],
 ];
 const strategyBtns = STRATEGIES.map(([v, label, title]) =>
   el('button', { class: 'btn small', 'data-v': v, title, onclick: () => setStrategy(v) }, label),
 );
 const strategyBar = el('div', { class: 'strategy', role: 'group', 'aria-label': 'Detectiestrategie' }, el('span', { class: 'strategy-label' }, 'Detectie:'), el('span', { class: 'seg' }, ...strategyBtns));
 function renderStrategy() {
+  S.strategy = strategyOf(S);
   for (const b of strategyBtns) b.classList.toggle('active', b.dataset.v === S.strategy);
 }
+/** Voorinstelling kiezen (zet de detectiemethoden), of bij "Eigen" de methoden zelf kiezen. */
 function setStrategy(v: Strategy) {
+  if (v === 'eigen') return openSettings('methoden');
   if (S.strategy === v) return;
+  Object.assign(S, PRESETS[v]);
   S.strategy = v;
   saveSettings();
   renderStrategy();
@@ -1175,7 +1186,7 @@ const detectRunningMain = () => runningMain > 0;
  * leesbare gedrukte tekst rechtop stond, alsnog gedraaid doorzoeken (op de achtergrond).
  */
 function queueRotationChecks() {
-  if (!S.searchRotated || S.strategy !== 'volledig') return;
+  if (!S.searchRotated || !S.labels) return;
   let n = 0;
   for (const d of docs) {
     if (d.status !== 'klaar') continue;
@@ -1251,6 +1262,7 @@ async function runDetect(doc: Doc, p: PageState, phase: Phase) {
     p.printed = res.printed;
     p.printedPos = res.printedPos;
     p.kop = res.kop;
+    p.frames = res.frames;
   } catch (e) {
     p.detect = 'fout';
     p.detectNote = 'Fout bij detectie: ' + (e instanceof Error ? e.message : String(e));
@@ -1278,15 +1290,18 @@ async function runDetect(doc: Doc, p: PageState, phase: Phase) {
  * door de OCR gemist werden, worden aangevuld en daarna aangepast aan de inkt op deze pagina.
  */
 async function completeMissing(): Promise<number> {
-  // Vangnetten (aanvullen op basis van andere pagina's) horen bij de volledige strategie.
-  if (S.strategy !== 'volledig') return 0;
   const pages = () => docs.filter((d) => d.status === 'klaar').flatMap((d) => d.pages);
-  // Eerst op basis van vakken op dezelfde pagina elders; daarna (met die vakken erbij) op basis
-  // van hetzelfde gedrukte blad, voor bladen met maar één label.
-  let added = await addCompleted(completeFromPeers(pages()));
-  added += await addCompleted(completeFromSameSheet(pages()));
-  // Tot slot: naast het kopwoord (logo), voor bladen waar het label zelf onleesbaar is.
-  added += await addCompleted(completeFromHeader(pages()));
+  let added = 0;
+  // Naamkader zonder leesbaar woord: telt als het elders in de stapel bevestigd is.
+  if (S.kopKader && S.kopKaderLeren) added += await addCompleted(completeFromFrames(pages()));
+  if (S.vangnet) {
+    // Eerst op basis van vakken op dezelfde pagina elders; daarna (met die vakken erbij) op basis
+    // van hetzelfde gedrukte blad, voor bladen met maar één label.
+    added += await addCompleted(completeFromPeers(pages()));
+    added += await addCompleted(completeFromSameSheet(pages()));
+    // Tot slot: naast het kopwoord (logo), voor bladen waar het label zelf onleesbaar is.
+    added += await addCompleted(completeFromHeader(pages()));
+  }
   if (added) {
     renderDocList();
     renderStrip();
@@ -1317,7 +1332,7 @@ async function addCompleted(adds: { page: unknown; box: Omit<Box, 'id'> }[]): Pr
     if (!refined) continue; // leeg: niets te verbergen
     added++;
     p.boxes.push({ ...box, ...refined, id: uid() });
-    p.detectNote = (p.detectNote ?? '') + ` + ${KIND_LABEL[box.kind].toLowerCase()} aangevuld (${box.label?.startsWith('zelfde blad') ? 'zelfde blad als bij andere leerlingen' : box.label?.startsWith('naast kopwoord') ? 'naast het kopwoord' : "afgeleid van andere pagina's"})`;
+    p.detectNote = (p.detectNote ?? '') + ` + ${KIND_LABEL[box.kind].toLowerCase()} aangevuld (${box.label?.startsWith('zelfde blad') ? 'zelfde blad als bij andere leerlingen' : box.label?.startsWith('naast kopwoord') ? 'naast het kopwoord' : box.label?.startsWith('kopstrook') ? 'naamkader, geleerd van de stapel' : "afgeleid van andere pagina's"})`;
     doc.exported = false;
   }
   return added;
@@ -2773,7 +2788,7 @@ function startMatcher(start?: Doc) {
 
 // ───────────────────────── Instellingen ─────────────────────────
 
-function openSettings() {
+function openSettings(section?: string) {
   const dlg = el('dialog');
   const draft: Settings = { ...S };
   const text = (k: keyof Settings, label: string, help?: string, area = false) => {
@@ -2789,7 +2804,7 @@ function openSettings() {
     return el('div', { class: 'field' }, el('label', {}, label), inp, help ? el('div', { class: 'note' }, help) : null);
   };
   const check = (k: keyof Settings, label: string, help?: string) => {
-    const inp = el('input', { type: 'checkbox', checked: Boolean(draft[k]) }) as HTMLInputElement;
+    const inp = el('input', { type: 'checkbox', checked: Boolean(draft[k]), 'data-k': k }) as HTMLInputElement;
     inp.addEventListener('change', () => ((draft as unknown as Record<string, unknown>)[k] = inp.checked));
     return el('label', { class: 'check' }, inp, el('span', {}, label, help ? el('div', { class: 'note' }, help) : null));
   };
@@ -2814,7 +2829,8 @@ function openSettings() {
   color.addEventListener('input', () => (draft.textColor = color.value));
 
   const save = () => {
-    const oldKw = [S.kwNaam, S.kwNummer, S.kwKlas, S.kwStop, S.kwKop, S.kopStrook, S.detectMarkers, S.detectKlas, S.detectNummer, S.searchRotated, S.padding, S.ocrDpi].join('|');
+    const kwOf = (x: Settings) => [x.kwNaam, x.kwNummer, x.kwKlas, x.kwStop, x.kwKop, x.detectKlas, x.detectNummer, x.padding, x.ocrDpi, ...METHOD_KEYS.map((k) => x[k])].join('|');
+    const oldKw = kwOf(S);
     const namesChanged = extraNames !== namesArea.value;
     extraNames = namesArea.value;
     Object.assign(S, draft);
@@ -2823,7 +2839,8 @@ function openSettings() {
     setWorkerCount(S.ocrWorkers);
     dlg.close();
     renderAll();
-    const newKw = [S.kwNaam, S.kwNummer, S.kwKlas, S.kwStop, S.kwKop, S.kopStrook, S.detectMarkers, S.detectKlas, S.detectNummer, S.searchRotated, S.padding, S.ocrDpi].join('|');
+    renderStrategy();
+    const newKw = kwOf(S);
     if ((oldKw !== newKw || namesChanged) && docs.length) toast('Detectie-instellingen gewijzigd. Kies ☰ Menu → "Alles opnieuw detecteren" om ze toe te passen.');
   };
 
@@ -2849,16 +2866,51 @@ function openSettings() {
       el(
         'fieldset',
         {},
+        el('legend', { id: 'set-methoden' }, 'Detectiemethoden'),
+        el('div', { class: 'note', style: 'margin:0 0 8px' }, 'De knoppen bovenin ("🏫 Schoollogo", "🔍 Volledig") zetten deze vinkjes in één keer. Pas je hier iets aan, dan staat bovenin "⚙ Eigen".'),
+        el(
+          'div',
+          { class: 'grid2' },
+          ...(['logo', 'volledig'] as const).map((v) =>
+            el('button', {
+              class: 'btn small',
+              type: 'button',
+              onclick: () => {
+                Object.assign(draft, PRESETS[v]);
+                for (const k of METHOD_KEYS) {
+                  const cb = dlg.querySelector<HTMLInputElement>(`input[data-k="${k}"]`);
+                  if (cb) cb.checked = Boolean(draft[k]);
+                }
+              },
+            }, v === 'logo' ? 'Vinkjes zoals 🏫 Schoollogo' : 'Vinkjes zoals 🔍 Volledig'),
+          ),
+        ),
+        el('div', { class: 'mh-set' }, 'Bovenkant van de pagina (de hele bovenkant weghalen als daar …)'),
+        check('kopStrook', '… het schoollogo staat (kopwoord, zie hieronder)', 'Tot onder het invulblok, over de volle breedte (bij twee A4\'s naast elkaar: de helft met het logo).'),
+        check('kopBlok', '… het invulblok staat ("Naam:" met "Vak:", "Datum:", "Klas:" of "Examen no.")', 'Voor als het logo niet gelezen wordt.'),
+        check('kopKader', '… een slank kader met "Naam" of "Klas" erin staat (zoals bovenaan een voorblad)'),
+        el(
+          'div',
+          { class: 'sub-checks' },
+          check('kopKaderLeren', 'Kader zonder leesbaar woord telt als het elders in de stapel op dezelfde plek bevestigd is'),
+          check('kopKaderRuim', 'Ruimer lezen: één OCR-fout mag ("NAAN", "KIas"), en het kader nog eens extra lezen'),
+          check('kopKaderVorm', 'Alleen op vorm: elk zeer slank kader bovenaan (minstens 8× zo breed als hoog), ook zonder woord', 'Het rigoureust. Ook andere smalle kaders bovenaan worden dan weggehaald.'),
+        ),
+        el('div', { class: 'mh-set' }, 'Elders op de pagina'),
+        check('detectMarkers', 'Naamvelden met geprinte markeringen', 'Twee zwarte vierkantjes (ca. 5 mm) linksboven en rechtsonder het naamveld: alles daartussen wordt weggehaald. Sjabloon: zie Help.'),
+        check('labels', 'Labels overal op de pagina ("Naam kandidaat", "Examen no.", "Klas", …)', 'Leest de hele pagina; het vak groeit mee met het handschrift naast het label.'),
+        el('div', { class: 'sub-checks' }, check('detectNummer', 'Examen-/leerlingnummer verwijderen'), check('detectKlas', 'Klas verwijderen')),
+        check('searchFileNames', 'Namen uit de bestandsnaam overal op de pagina zoeken', 'Heet het bestand bijv. "jansen piet.pdf", dan worden "jansen" en "piet" overal gezocht.'),
+        check('vangnet', "Vangnetten: ontbrekende vakken aanvullen op basis van andere pagina's", 'Zelfde blad bij andere leerlingen, dezelfde kop, of naast het kopwoord.'),
+        check('searchRotated', 'Ook zoeken in gedraaide pagina\'s (90°/180°/270°)', 'Alleen met "Labels overal". Kost wat extra tijd.'),
+      ),
+      el(
+        'fieldset',
+        {},
         el('legend', {}, 'Automatische detectie'),
         check('autoDetect', 'Automatisch detecteren na het toevoegen van bestanden'),
-        check('detectNummer', 'Examen-/leerlingnummer verwijderen'),
-        check('detectKlas', 'Klas verwijderen'),
-        check('kopStrook', 'Bij een kopwoord (logo) bovenaan: de hele bovenkant weghalen', 'Staat het kopwoord (bijv. "Coornhert" uit het logo) bovenaan, dan gaat alles van de bovenrand tot onder het invulblok weg, over de volle breedte (bij twee A4\'s naast elkaar: de helft met het logo).'),
-        check('detectMarkers', 'Naamvelden met geprinte markeringen herkennen', 'Twee zwarte vierkantjes (ca. 5 mm) linksboven en rechtsonder het naamveld: alles daartussen wordt weggehaald, ook als "Naam" onleesbaar is. Sjabloon: zie Help.'),
-        check('searchFileNames', 'Ook zoeken naar de naam uit de bestandsnaam, overal op de pagina', 'Heet het bestand bijv. "jansen piet.pdf", dan worden de woorden "jansen" en "piet" overal op de pagina gezocht (werkt het best bij duidelijk schrift).'),
         namesField,
         check('autoSplit', 'Scan van een hele klas automatisch per leerling opdelen', 'Staat het naamvak op een vast ritme (bijv. op elke 2e pagina), dan krijgt elke leerling een eigen document en kandidaatnummer.'),
-        check('searchRotated', 'Ook zoeken in gedraaide pagina\'s (90°/180°/270°)', 'Alleen als er rechtop niets gevonden wordt. Kost wat extra tijd.'),
         text('kwNaam', 'Labels voor naam', 'Gescheiden door komma\'s. Hoofdletters en kleine OCR-fouten maken niet uit.', true),
         text('kwNummer', 'Labels voor nummer', undefined, true),
         text('kwKlas', 'Labels voor klas', undefined, true),
@@ -2893,7 +2945,7 @@ function openSettings() {
     el(
       'div',
       { class: 'dfoot' },
-      el('button', { class: 'btn', onclick: () => { if (confirm('Alle instellingen terugzetten naar standaard?')) { Object.assign(draft, DEFAULT_SETTINGS); Object.assign(S, DEFAULT_SETTINGS); saveSettings(); dlg.close(); renderAll(); } } }, 'Standaardwaarden'),
+      el('button', { class: 'btn', onclick: () => { if (confirm('Alle instellingen terugzetten naar standaard?')) { Object.assign(draft, DEFAULT_SETTINGS); Object.assign(S, DEFAULT_SETTINGS); saveSettings(); dlg.close(); renderStrategy(); renderAll(); } } }, 'Standaardwaarden'),
       el('span', { class: 'spacer' }),
       el('button', { class: 'btn', onclick: () => dlg.close() }, 'Annuleren'),
       el('button', { class: 'btn primary', onclick: save }, 'Opslaan'),
@@ -2902,6 +2954,7 @@ function openSettings() {
   document.body.append(dlg);
   dlg.addEventListener('close', () => dlg.remove());
   dlg.showModal();
+  if (section) dlg.querySelector(`#set-${section}`)?.scrollIntoView();
 }
 
 // ───────────────────────── Help ─────────────────────────
@@ -2925,7 +2978,7 @@ function openHelp(section?: string) {
       el('p', {}, 'Een zwart vlak óp een PDF leggen is onveilig: de oorspronkelijke scan zit er dan nog onder en kan eruit gehaald worden. NamenWeg bouwt daarom elke pagina opnieuw op: de pagina wordt naar pixels omgezet, de pixels van het naamvak worden overschreven, en alleen díé nieuwe afbeelding komt in een gloednieuwe PDF. Er gaan geen originele beeldlagen, tekstlagen, metadata (zoals auteur, scanner of bestandsnaam) mee.'),
       el('p', {}, 'Na de export controleert de app elk bestand automatisch: geen tekstlaag, één afbeelding per pagina, en geen namen of de oorspronkelijke bestandsnaam in de metadata.'),
       el('h3', {}, '🔍 Automatische detectie'),
-      el('p', {}, 'Bovenin kies je de strategie. "🏫 Schoollogo" (standaard) zoekt alleen het schoollogo (het kopwoord uit Instellingen, bijv. "Coornhert") en haalt daar de hele bovenkant van de pagina weg: het invulblok van het antwoordblad en van het kladpapier. Verder niets, dus ook geen "NAAM:" op een voorblad zonder logo. "🔍 Volledig" doet alles hieronder.'),
+      el('p', {}, 'Bovenin kies je de strategie. "🏫 Schoollogo" (standaard) bekijkt alleen de bovenkant van elke pagina. Staat daar het schoollogo (het kopwoord uit Instellingen, bijv. "Coornhert"), het invulblok van het antwoordblad of kladpapier (Naam:, Vak:, Datum:, Klas:, Examen no.) of een slank kader met NAAM … Klas (zoals bovenaan een voorblad), dan gaat de hele bovenkant weg tot onder dat blok. Verder niets. "🔍 Volledig" doet alles hieronder.'),
       el('p', {}, 'Volledig: de app leest de voorgedrukte tekst op elke pagina en zoekt labels zoals "Naam kandidaat", "Examen no.", "Leerlingnummer" en "Klas". Vanaf het label groeit het vak mee met het handschrift en eventuele invulhokjes. Staat er rechtop niets, dan wordt de pagina gedraaid bekeken (handig voor liggende uitwerkbijlagen).'),
       el('p', {}, `Mist de tekstherkenning een label op één pagina (bijv. "Examen no."), dan vult de app het vak aan op basis van dezelfde kop op andere pagina's. Zulke vakken zijn gemarkeerd als "afgeleid". Ook wordt de naam uit de bestandsnaam (bijv. "jansen piet.pdf") overal op de pagina gezocht.`),
       el('p', {}, 'Handgeschreven namen zónder voorgedrukt label kunnen niet altijd automatisch gevonden worden. Controleer daarom altijd het resultaat met het 🔎 Controle-overzicht of de knop "Voorbeeld".'),

@@ -88,13 +88,21 @@ describe('invulblok herkennen aan de labels', () => {
   it('Naam + Vak/Datum/Klas bovenaan: strook tot onder het laagste label', async () => {
     const { headerBlockStrip } = await import('../../src/detect-core');
     const r = headerBlockStrip([w('Naam:', 820, 100), w('Vak:', 820, 160), w('Datum:', 820, 220), w('Klas:', 1250, 220), w('Opgave', 200, 600)], 1654, 2339)!;
-    expect(r).toEqual({ x0: 0, y0: 0, x1: 1654, y1: 245 + 75 });
+    expect(r).toEqual({ x0: 0, y0: 0, x1: 1654, y1: 100 + 9 * 25 });
   });
   it('niet bij alleen "Naam", of lager op de pagina, of bij lage zekerheid', async () => {
     const { headerBlockStrip } = await import('../../src/detect-core');
     expect(headerBlockStrip([w('Naam:', 820, 100)], 1654, 2339)).toBeUndefined();
     expect(headerBlockStrip([w('Naam:', 820, 1000), w('Klas:', 1250, 1000)], 1654, 2339)).toBeUndefined();
     expect(headerBlockStrip([w('Naam:', 820, 100, 40), w('Klas:', 1250, 100)], 1654, 2339)).toBeUndefined();
+  });
+  it('telt alleen labels (met ":"), geen woorden in een zin, en niets ver onder het naamlabel', async () => {
+    const { headerBlockStrip } = await import('../../src/detect-core');
+    // "Vul je naam en klas hierboven in."
+    expect(headerBlockStrip([w('naam', 400, 370), w('en', 490, 370), w('klas', 560, 370)], 1654, 2339)).toBeUndefined();
+    // "cijfer:" veel lager telt niet mee.
+    expect(headerBlockStrip([w('Naam:', 400, 150), w('Cijfer:', 600, 700)], 1654, 2339)).toBeUndefined();
+    expect(headerBlockStrip([w('Naam:', 400, 150), w('Klas:', 1200, 150)], 1654, 2339)!.y1).toBe(175 + 3 * 25);
   });
   it('kladpapier: "Naam kandidaat" en "Examen no."', async () => {
     const { headerBlockStrip } = await import('../../src/detect-core');

@@ -50,6 +50,13 @@ export interface PageState {
   printedPos?: PrintedAnchor[];
   /** Plek van het kopwoord (bijv. de schoolnaam in het logo), rechtop gelezen; zie Settings.kwKop. */
   kop?: Rect;
+  /** Slanke kaders bovenaan (bijv. "NAAM: …… Klas"); ok = bevestigd als naamkader. */
+  frames?: SlimFrame[];
+}
+
+/** Slank kader bovenaan een pagina (genormaliseerd). */
+export interface SlimFrame extends Rect {
+  ok: boolean;
 }
 
 /** Goed leesbaar gedrukt woord met zijn plek op de pagina (midden, 0..1). */
@@ -59,8 +66,11 @@ export interface PrintedAnchor {
   y: number;
 }
 
-/** Detectiestrategie: alleen de blokken bij het schoollogo, of alles wat de app kan. */
-export type Strategy = 'logo' | 'volledig';
+/**
+ * Detectiestrategie: een voorinstelling van de detectiemethoden hieronder. "logo" = alleen de
+ * bovenkant (logo, invulblok, naamkader); "volledig" = alles; "eigen" = zelf gekozen.
+ */
+export type Strategy = 'logo' | 'volledig' | 'eigen';
 
 export interface Settings {
   strategy: Strategy;
@@ -99,8 +109,22 @@ export interface Settings {
   autoSplit: boolean;
   /** Geprinte markeringen (zwarte vierkantjes op de hoeken van het naamveld) zoeken. */
   detectMarkers: boolean;
-  /** Staat het kopwoord (logo) bovenaan: de hele bovenkant van de pagina weghalen. */
+  /** Bovenkant: staat het kopwoord (logo) bovenaan, dan de hele bovenkant weghalen. */
   kopStrook: boolean;
+  /** Bovenkant: invulblok herkennen aan de labels (Naam: + Vak:/Datum:/Klas:/Examen no.). */
+  kopBlok: boolean;
+  /** Bovenkant: slank kader met "Naam"/"Klas" erin. */
+  kopKader: boolean;
+  /** Naamkader: ook zonder leesbaar woord als het elders in de stapel op die plek bevestigd is. */
+  kopKaderLeren: boolean;
+  /** Naamkader: ruimer lezen (één OCR-fout, extra OCR-ronde op het kader). */
+  kopKaderRuim: boolean;
+  /** Naamkader: elk zeer slank kader bovenaan (≥ 8:1), ook zonder woord erin. */
+  kopKaderVorm: boolean;
+  /** Labels overal op de pagina (Naam, Klas, Examen no., …), met tweede OCR-ronde. */
+  labels: boolean;
+  /** Vangnetten: vakken aanvullen op basis van andere pagina's (zelfde blad, kopwoord). */
+  vangnet: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -114,7 +138,7 @@ export const DEFAULT_SETTINGS: Settings = {
   jpegQuality: 0,
   grayscale: false,
   autoDetect: true,
-  searchRotated: true,
+  searchRotated: false,
   ocrDpi: 200,
   ocrWorkers: 0,
   stampEveryPage: false,
@@ -131,8 +155,30 @@ export const DEFAULT_SETTINGS: Settings = {
   detectKlas: true,
   padding: 0.5,
   showLabels: true,
-  searchFileNames: true,
+  searchFileNames: false,
   autoSplit: true,
-  detectMarkers: true,
+  detectMarkers: false,
   kopStrook: true,
+  kopBlok: true,
+  kopKader: true,
+  kopKaderLeren: true,
+  kopKaderRuim: true,
+  kopKaderVorm: true,
+  labels: false,
+  vangnet: false,
 };
+
+/** De methoden die een strategie aan- of uitzet. */
+export const METHOD_KEYS = ['kopStrook', 'kopBlok', 'kopKader', 'kopKaderLeren', 'kopKaderRuim', 'kopKaderVorm', 'detectMarkers', 'labels', 'searchFileNames', 'vangnet', 'searchRotated'] as const;
+type MethodKey = (typeof METHOD_KEYS)[number];
+
+export const PRESETS: Record<'logo' | 'volledig', Record<MethodKey, boolean>> = {
+  logo: { kopStrook: true, kopBlok: true, kopKader: true, kopKaderLeren: true, kopKaderRuim: true, kopKaderVorm: true, detectMarkers: false, labels: false, searchFileNames: false, vangnet: false, searchRotated: false },
+  volledig: { kopStrook: true, kopBlok: true, kopKader: true, kopKaderLeren: true, kopKaderRuim: true, kopKaderVorm: true, detectMarkers: true, labels: true, searchFileNames: true, vangnet: true, searchRotated: true },
+};
+
+/** Welke strategie past bij deze instellingen ("eigen" als het geen voorinstelling is). */
+export function strategyOf(s: Settings): Strategy {
+  for (const k of ['logo', 'volledig'] as const) if (METHOD_KEYS.every((m) => s[m] === PRESETS[k][m])) return k;
+  return 'eigen';
+}

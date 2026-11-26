@@ -12,9 +12,15 @@ een analyse of gebruiken als voorbeeld, dan moeten die gegevens eruit. NamenWeg 
 1. Sleep een of meer PDF's (of JPG/PNG-scans) in de app – of klik op **🧪 Probeer met voorbeeld**
    voor drie neptoetsen met verzonnen namen.
 2. De app detecteert **automatisch**. Bovenin kies je de strategie:
-   - **🏫 Schoollogo** (standaard): alleen het schoollogo zoeken (kopwoord, bijv. *Coornhert*) en
-     daar de hele bovenkant van de pagina weghalen – het invulblok van het antwoordblad en het
-     kladpapier. Verder niets: snel en voorspelbaar.
+   - **🏫 Schoollogo** (standaard): alleen de bovenkant van elke pagina bekijken. Staat daar het
+     schoollogo (kopwoord, bijv. *Coornhert*), het invulblok van het antwoordblad of kladpapier
+     (*Naam:* met *Vak:/Datum:/Klas:/Examen no.*), of een slank kader met *NAAM … Klas* (zoals op
+     een voorblad), dan gaat de hele bovenkant weg tot onder dat blok – over de volle breedte, of
+     de helft bij twee A4's naast elkaar. Verder niets: snel en voorspelbaar.
+   - **⚙ Eigen**: elke methode staat ook los aan of uit in Instellingen → *Detectiemethoden*
+     (de twee knoppen zijn voorinstellingen daarvan). Voor het naamkader: ook zonder leesbaar
+     woord als het elders in de stapel op dezelfde plek bevestigd is, ruimer lezen (één OCR-fout,
+     extra OCR-ronde op het kader) en "alleen op vorm" (elk zeer slank kader bovenaan, ≥ 8 : 1).
    - **🔍 Volledig**: alles hieronder – voorgedrukte labels zoals *Naam kandidaat*, *Examen no.*,
      *Leerlingnummer* en *Klas*, geprinte markeringen, het logo, namen uit de bestandsnaam,
      aanvullen op basis van andere pagina's en gedraaide pagina's.

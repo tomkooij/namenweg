@@ -2424,3 +2424,17 @@ dialog.qf.m-uitvoer .qf-x {
 .strategy .btn.active {
   font-weight: 600;
 }
+/* Instellingen: groepen detectiemethoden */
+.mh-set {
+  margin: 12px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.sub-checks {
+  margin-left: 26px;
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+}

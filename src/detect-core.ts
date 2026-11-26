@@ -1,5 +1,5 @@
 // Kern van de detectie zonder afhankelijkheid van de browser (testbaar in Node).
-import type { Box, BoxKind, PrintedAnchor, Rot, Settings } from './types';
+import type { Box, BoxKind, PrintedAnchor, Rot, Settings, SlimFrame } from './types';
 
 export interface OcrWord {
   text: string;
@@ -54,6 +54,8 @@ export interface DetectResult {
   printedPos?: PrintedAnchor[];
   /** Plek van het kopwoord (genormaliseerd), zie findKop. */
   kop?: { x: number; y: number; w: number; h: number };
+  /** Slanke kaders bovenaan (genormaliseerd); ok = bevestigd als naamkader. */
+  frames?: SlimFrame[];
   boxes: Box[];
   note: string;
   rotation: Rot;
@@ -1223,14 +1225,176 @@ const KOPBLOK_ANDER = new Set(['vak', 'datum', 'klas', 'cijfer', 'examen', 'exam
  * `words` in pixels van de hele pagina; alleen woorden in de bovenste 25% tellen.
  */
 export function headerBlockStrip(words: OcrWord[], W: number, H: number): PxRect | undefined {
-  const hits = words.filter((w) => w.conf >= 60 && w.y1 < 0.25 * H).map((w) => ({ w, t: norm(w.text) }));
-  const naam = hits.filter((h) => KOPBLOK_NAAM.has(h.t));
-  const ander = hits.filter((h) => KOPBLOK_ANDER.has(h.t));
-  if (!naam.length || !ander.length) return undefined;
-  const block = [...naam, ...ander].map((h) => h.w);
-  const lineH = [...block.map((w) => w.y1 - w.y0)].sort((a, b) => a - b)[Math.floor((block.length - 1) / 2)];
-  const y1 = Math.min(H, Math.max(...block.map((w) => w.y1)) + 3 * lineH);
+  // Een label in een invulblok eindigt op ":" (of "."), eventueel na een tweede woord ("Naam
+  // kandidaat:", "Examen no.:"). Zo tellen "naam" en "klas" in een zin ("Vul je naam en klas
+  // hierboven in") niet mee.
+  const isLabel = (w: OcrWord) => {
+    if (/[:.]\s*$/.test(w.text)) return true;
+    const h = w.y1 - w.y0;
+    return words.some((o) => o !== w && o.line === w.line && o.x0 >= w.x1 && Math.abs(o.y0 - w.y0) < h && o.x0 - w.x1 < 1.5 * h && /[:.]\s*$/.test(o.text));
+  };
+  const hits = words.filter((w) => w.conf >= 60 && w.y1 < 0.25 * H && isLabel(w)).map((w) => ({ w, t: norm(w.text) }));
+  const naam = hits.filter((h) => KOPBLOK_NAAM.has(h.t)).sort((a, b) => a.w.y0 - b.w.y0)[0];
+  if (!naam) return undefined;
+  // Regelhoogte van gedrukte labels; handschrift dat met het label versmolten is, telt niet mee.
+  const lineH = Math.min(naam.w.y1 - naam.w.y0, 0.012 * H);
+  // Alleen labels die bij hetzelfde blok horen: vlak bij het naamlabel (niet bijv. "cijfer" in
+  // een formulekader verderop).
+  const ander = hits.filter(
+    (h) =>
+      KOPBLOK_ANDER.has(h.t) &&
+      h.w.y0 > naam.w.y0 - 2 * lineH &&
+      h.w.y0 < naam.w.y1 + 7 * lineH &&
+      Math.abs((h.w.x0 + h.w.x1) / 2 - (naam.w.x0 + naam.w.x1) / 2) < 0.6 * W,
+  );
+  if (!ander.length) return undefined;
+  const block = [naam.w, ...ander.map((h) => h.w)];
+  let y1 = Math.max(...block.map((w) => w.y1)) + 3 * lineH;
+  // Invulblok met meerdere regels (Vak/Datum/Cijfer/Examen): alle regels meenemen, ook als de OCR
+  // de onderste labels mist (ongeveer drie regels plus het handschrift eronder).
+  if (ander.some((h) => h.t !== 'klas')) y1 = Math.max(y1, naam.w.y0 + 9 * lineH);
   const cx = block.reduce((a, w) => a + (w.x0 + w.x1) / 2, 0) / block.length;
   const landscape = W > H;
-  return { x0: landscape && cx > W / 2 ? W / 2 : 0, y0: 0, x1: landscape && cx <= W / 2 ? W / 2 : W, y1 };
+  return { x0: landscape && cx > W / 2 ? W / 2 : 0, y0: 0, x1: landscape && cx <= W / 2 ? W / 2 : W, y1: Math.min(H, y1) };
 }
+
+// ───────────────────────── Slank naamkader ─────────────────────────
+
+/**
+ * Slanke rechthoekige kaders (dunne zwarte rand, minstens 4× zo breed als hoog, 4–25 mm hoog,
+ * minstens 50 mm breed), zoals het "NAAM: …… Klas ……"-kader bovenaan een voorblad. Alleen de
+ * vorm: twee lange evenwijdige lijnen boven elkaar die even breed zijn, met aan beide kanten
+ * een korte verticale lijn. Handschrift dat door de rand loopt, stoort niet.
+ * `img` is (een deel van) de pagina; coördinaten in pixels daarvan.
+ */
+export function findSlimBoxes(img: { data: Uint8ClampedArray | Uint8Array; width: number; height: number }, dpi: number): PxRect[] {
+  const f = Math.max(1, Math.floor(dpi / 100));
+  const W = Math.floor(img.width / f);
+  const H = Math.floor(img.height / f);
+  const mm = dpi / f / 25.4;
+  const dark = new Uint8Array(W * H);
+  const d = img.data;
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++) {
+      let lo = 255;
+      for (let j = 0; j < f; j++)
+        for (let i = 0; i < f; i++) {
+          const k = ((y * f + j) * img.width + x * f + i) * 4;
+          lo = Math.min(lo, 0.299 * d[k] + 0.587 * d[k + 1] + 0.114 * d[k + 2]);
+        }
+      if (lo < 150) dark[y * W + x] = 1;
+    }
+  // 1. Lange horizontale lijnen (kleine onderbrekingen mogen).
+  const gap = Math.max(2, Math.round(1 * mm));
+  const minLen = 50 * mm;
+  type Seg = { y: number; x0: number; x1: number };
+  const rowsSegs: Seg[] = [];
+  for (let y = 0; y < H; y++) {
+    let start = -1;
+    let last = -1;
+    for (let x = 0; x <= W; x++) {
+      const on = x < W && dark[y * W + x];
+      if (on) {
+        if (start < 0) start = x;
+        last = x;
+      } else if (start >= 0 && x - last > gap) {
+        if (last - start >= minLen) rowsSegs.push({ y, x0: start, x1: last });
+        start = -1;
+      }
+    }
+  }
+  // Rijen van dezelfde (dikke) lijn samenvoegen.
+  const lines: Seg[] = [];
+  for (const s of rowsSegs) {
+    const l = lines.find((o) => s.y - o.y <= 3 && Math.abs(o.x0 - s.x0) < 3 * mm && Math.abs(o.x1 - s.x1) < 3 * mm);
+    if (l) l.y = s.y;
+    else lines.push({ ...s });
+  }
+  // 2. Paren lijnen met korte zijkanten.
+  const vertical = (x: number, y0: number, y1: number) => {
+    let best = 0;
+    for (let dx = -2; dx <= 2; dx++) {
+      const xx = x + dx;
+      if (xx < 0 || xx >= W) continue;
+      let n = 0;
+      for (let y = y0; y <= y1; y++) if (dark[y * W + xx]) n++;
+      best = Math.max(best, n / (y1 - y0 + 1));
+    }
+    return best;
+  };
+  const out: PxRect[] = [];
+  for (const a of lines)
+    for (const b of lines) {
+      const h = b.y - a.y;
+      if (h < 4 * mm || h > 25 * mm) continue;
+      if (Math.abs(a.x0 - b.x0) > 3 * mm || Math.abs(a.x1 - b.x1) > 3 * mm) continue;
+      const x0 = Math.min(a.x0, b.x0);
+      const x1 = Math.max(a.x1, b.x1);
+      if ((x1 - x0) / h < 4) continue;
+      if (vertical(x0, a.y, b.y) < 0.6 || vertical(x1, a.y, b.y) < 0.6) continue;
+      const r = { x0: x0 * f, y0: a.y * f, x1: (x1 + 1) * f, y1: (b.y + 1) * f };
+      if (!out.some((o) => Math.abs(o.x0 - r.x0) < 3 * mm * f && Math.abs(o.y0 - r.y0) < 3 * mm * f)) out.push(r);
+    }
+  return out;
+}
+
+/** Staat er in (of tegen) het kader een woord dat op "Naam" of "Klas" lijkt? */
+export function slimBoxHasLabel(box: PxRect, words: OcrWord[], pad: number) {
+  return words.some((w) => {
+    if (w.conf < 40) return false;
+    const t = norm(w.text);
+    if (!(t.startsWith('naa') || t.startsWith('nam') || t.startsWith('kla') || t.includes('naam') || t.includes('klas'))) return false;
+    return w.x1 > box.x0 - pad && w.x0 < box.x1 + pad && w.y1 > box.y0 - pad && w.y0 < box.y1 + pad;
+  });
+}
+
+/**
+ * Naamkader leren van de rest van de stapel: is op een pagina een slank kader gevonden zonder
+ * leesbaar "Naam"/"Klas", maar staat op een andere pagina een bevestigd naamkader van dezelfde
+ * maat op (ongeveer) dezelfde plek, dan telt het hier ook. Geeft de bovenstrook (van de bovenrand
+ * tot 4 mm onder het kader; bij twee A4's naast elkaar alleen die helft).
+ */
+export function completeFromFrames(pages: (PeerPage & { frames?: SlimFrame[]; checked?: boolean })[]): { page: PeerPage; box: Omit<Box, 'id'> }[] {
+  const added: { page: PeerPage; box: Omit<Box, 'id'> }[] = [];
+  const sameShape = (a: PeerPage, b: PeerPage) => Math.abs(a.wPt / a.hPt - b.wPt / b.hPt) < 0.02;
+  const confirmed = pages.flatMap((p) => (p.frames ?? []).filter((f) => f.ok).map((f) => ({ p, f })));
+  if (!confirmed.length) return added;
+  for (const q of pages) {
+    if (q.checked) continue;
+    for (const f of q.frames ?? []) {
+      if (f.ok) continue;
+      const src = confirmed.find(
+        (c) => c.p !== q && sameShape(c.p, q) && Math.abs(c.f.w - f.w) < 0.03 && Math.abs(c.f.h - f.h) < 0.012 && Math.abs(c.f.x - f.x) < 0.04 && Math.abs(c.f.y - f.y) < 0.04,
+      );
+      if (!src) continue;
+      const y1 = Math.min(1, f.y + f.h + 4 / ((q.hPt / 72) * 25.4));
+      // Al weggehaald door een andere bovenstrook?
+      if (q.boxes.some((b) => b.y <= 0.001 && b.y + b.h >= y1 - 0.002 && b.x <= f.x && b.x + b.w >= f.x + f.w)) continue;
+      const land = q.wPt > q.hPt;
+      const cx = f.x + f.w / 2;
+      const x0 = land && cx > 0.5 ? 0.5 : 0;
+      const x1 = land && cx <= 0.5 ? 0.5 : 1;
+      added.push({
+        page: q,
+        box: { x: x0, y: 0, w: x1 - x0, h: y1, kind: 'naam', source: 'auto', rot: 0, text: !q.boxes.some((b) => b.text), label: 'kopstrook (naamkader, geleerd van de stapel)' },
+      });
+      break;
+    }
+  }
+  return added;
+}
+
+/** Woord dat op "Naam" of "Klas" lijkt; `ruim`: ook met één OCR-fout ("NAAN", "KIas"). */
+export function looksLikeLabel(text: string, ruim: boolean) {
+  const t = norm(text);
+  if (t.startsWith('naa') || t.startsWith('nam') || t.startsWith('kla') || t.includes('naam') || t.includes('klas')) return true;
+  if (!ruim || t.length < 3 || t.length > 6) return false;
+  const near = (a: string, b: string) => {
+    if (Math.abs(a.length - b.length) > 1) return false;
+    let i = 0;
+    while (i < a.length && a[i] === b[i]) i++;
+    return a.slice(i + 1) === b.slice(i + 1) || a.slice(i) === b.slice(i + 1) || a.slice(i + 1) === b.slice(i);
+  };
+  return ['naam', 'klas', 'name'].some((k) => near(t, k) || near(t.slice(0, 4), k));
+}
+
