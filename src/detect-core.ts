@@ -635,15 +635,22 @@ export function nameTokensFromFileName(fileName: string, s: Settings): string[] 
       .join(',')
       .split(/[,\s]+/)
       .map(norm)
-      .concat(['scan', 'toets', 'pdf', 'kopie', 'copy', 'page', 'pagina', 'versie', 'final', 'def', 'uitwerking', 'antwoorden', 'herkansing', 'proefwerk', 'examen', 'natuurkunde', 'wiskunde', 'scheikunde', 'biologie', 'engels', 'frans', 'duits', 'nederlands', 'geschiedenis', 'aardrijkskunde', 'economie']),
+      .concat(['scan', 'scans', 'toets', 'toetsen', 'pdf', 'kopie', 'copy', 'page', 'pagina', 'versie', 'final', 'def', 'uitwerking', 'antwoorden', 'antwoordblad', 'herkansing', 'proefwerk', 'examen', 'natuurkunde', 'wiskunde', 'scheikunde', 'biologie', 'engels', 'frans', 'duits', 'nederlands', 'geschiedenis', 'aardrijkskunde', 'economie'])
+      .concat(['sjabloon', 'template', 'test', 'testje', 'voorbeeld', 'concept', 'nieuw', 'oud', 'deel', 'geanonimiseerd', 'samengevoegd', 'nagewist', 'namenweg', 'markering', 'markeringen']),
   );
+  // Woorden waar een labelwoord in zit ("naamveld", "naamlijst", "klassenlijst") zijn geen naam.
+  const labelParts = [s.kwNaam, s.kwNummer, s.kwKlas]
+    .join(',')
+    .split(/[,\s]+/)
+    .map(norm)
+    .filter((k) => k.length >= 4);
   return [
     ...new Set(
       fileName
         .replace(/\.[^.]+$/, '')
         .split(/[\s_\-.,()]+/)
         .map(norm)
-        .filter((t) => t.length >= 4 && !/\d/.test(t) && !skip.has(t)),
+        .filter((t) => t.length >= 4 && !/\d/.test(t) && !skip.has(t) && !labelParts.some((k) => t.includes(k))),
     ),
   ];
 }

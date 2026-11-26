@@ -143,6 +143,11 @@ describe('namen uit bestandsnaam', () => {
     expect(nameTokensFromFileName('berg lotte van den.pdf', S)).toEqual(['berg', 'lotte']);
     expect(nameTokensFromFileName('scan_0012 toets natuurkunde.pdf', S)).toEqual([]);
   });
+  it('slaat woorden met een labelwoord en algemene woorden over', () => {
+    expect(nameTokensFromFileName('naamveld test jansen.pdf', S)).toEqual(['jansen']);
+    expect(nameTokensFromFileName('klassenlijst 4B naamlijst sjabloon.pdf', S)).toEqual([]);
+    expect(nameTokensFromFileName('toetsen-geanonimiseerd (samengevoegd) (nagewist).pdf', S)).toEqual([]);
+  });
   it('vindt die woorden met kleine OCR-fouten', () => {
     const hits = findNameWords(line(1, 100, ['Bakkes', 100, 80], ['zout', 200, 95]), ['bakker', 'pieter']);
     expect(hits.map((h) => h.text)).toEqual(['Bakkes']);

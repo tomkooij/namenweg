@@ -56,7 +56,7 @@ function field(widthMm, lines) {
 }
 
 const body = [
-  para(run('Naamveld met markeringen voor NamenWeg', { b: true, sz: 32 }), { after: 160 }),
+  para(run('Invulvak met markeringen (NamenWeg-sjabloon)', { b: true, sz: 32 }), { after: 160 }),
   para(
     run(
       'Kopieer een van de blokken hieronder naar je toets (voorblad en/of antwoordblad). NamenWeg herkent de twee zwarte vierkantjes en haalt bij het anonimiseren alles daartussen weg, ook als de naam slordig, schuin of over de lijn geschreven is. Daar komt dan "Kandidaat 67" te staan.',
